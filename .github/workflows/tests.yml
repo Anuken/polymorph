@@ -17,5 +17,7 @@ jobs:
         with:
           nim-version: 'stable'
       - name: Run tests
-        run: nimble test
+        run: |
+          nimble develop
+          nimble test
           
