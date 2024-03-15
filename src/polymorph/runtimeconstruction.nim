@@ -301,6 +301,11 @@ proc makeRuntimeConstruction*(id: EcsIdentity): NimNode =
           `res`[i] = componentInstanceType()(compRef.index).makeContainer()
 
     proc toTemplate*(entities: Entities): ConstructionTemplate =
+      ## Creates a `ConstructionTemplate` from a list of live entities.
+      ## 
+      ## Note that when a `ConstructionTemplate` is instantiated with
+      ## `construct`, the first entity may be used as a 'context' during
+      ## construction.
       result.setLen entities.len
       for i, e in entities:
         result[i] = e.toTemplate

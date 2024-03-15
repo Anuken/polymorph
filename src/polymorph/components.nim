@@ -745,7 +745,7 @@ proc genTypeAccess*(id: EcsIdentity): NimNode =
   result.add typeAccess
   result.add firstCompIdInits
 
-  # Add a generated type classes that cover all the types we've registered here.
+  # Add generated type classes that cover all the types we've registered here.
   var
     compTypeNodes: seq[NimNode]
     refTypeNodes: seq[NimNode]

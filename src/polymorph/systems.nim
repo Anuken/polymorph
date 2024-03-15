@@ -2067,8 +2067,8 @@ proc commitSystemList(id: EcsIdentity, systems: openarray[SystemIndex], runProc:
 
         id.endOperation
 
-      # Call all the parameter systems within the runProc.
       if runProc.len > 0:
+        # Call 'doSystemName()' that executes the system.
         sysCalls.add nnkCall.newTree(ident doProcName(sysName))
 
         when logOrder:
