@@ -1465,7 +1465,7 @@ proc sealStateChanges(id: EcsIdentity): NimNode =
     delProcName = ident "doDelete"
     delTemplName = ident "delete"
     deleteEntParam = ident "entity"
-    cacheId = quote do: EcsIdentity(`id`)
+    cacheId = quote do: `id`
 
     protectEventEntity =
       respondToPragma(deleteEntParam, "hostEntity",

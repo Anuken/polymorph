@@ -694,8 +694,7 @@ proc doRemoveComponents(id: EcsIdentity, entity: NimNode, componentList: NimNode
 
   let
     opStr = "removeComponents: " & id.commaSeparate(details.passed)
-    cacheId = quote do:
-      EcsIdentity(`id`)
+    cacheId = quote do: `id`
     relevantSystemsSeq = relevantSystems.toSeq
     relevantSystemInts = relevantSystemsSeq.toIntList
     locStr = $componentList.lineInfo
@@ -752,7 +751,7 @@ proc doRemoveComponents(id: EcsIdentity, entity: NimNode, componentList: NimNode
 proc makeStateChanges*(id: EcsIdentity): NimNode =
   let
     entity = ident "entity"
-    identity = quote do: EcsIdentity(`id`)
+    identity = quote do: `id`
     res = ident "result"
     componentList = ident "componentList"
 
@@ -1038,7 +1037,7 @@ proc doFetchComponents(id: EcsIdentity, entity: NimNode, components: NimNode): N
 proc makeFetchComponents*(id: EcsIdentity): NimNode =
   let
     entity = ident "entity"
-    ecsId = quote do: EcsIdentity(`id`)
+    ecsId = quote do: `id`
   
   quote do:
     macro fetchComponents*(`entity`: EntityRef, components: varargs[typed]): untyped =
@@ -1205,7 +1204,7 @@ proc makeDelete*(id: EcsIdentity): NimNode =
     deleteCore.add entitySym.iterateComponents(curComp, caseSysRemoves)
 
   let
-    cacheId = quote do: EcsIdentity(`id`)
+    cacheId = quote do: `id`
     
     storageVar = ident entityStorageVarName()
     entIdIdent = ident "entityId"

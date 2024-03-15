@@ -189,7 +189,7 @@ proc makeSystemType(id: EcsIdentity, sysIndex: SystemIndex, extraFields: seq[Nim
               error "Compile with '--threads:on' to use system threading options"
           when not declared(countProcessors):
             static:
-              if EcsIdentity(`id`).private:
+              if `id`.private:
                 error "Need 'cpuinfo.countProcessors'" & cannotImport
             from std/cpuinfo import countProcessors
       else:
@@ -395,7 +395,7 @@ proc instantiateSystem(id: EcsIdentity, sysIndex: SystemIndex, sysName: string, 
       `initParam`.systemName = `sysName`
       `fieldInits`
       `threadInits`
-      sys.id = `sysIndex`.SystemIndex
+      sys.id = `sysIndex`
 
     `timingsProcs`
 
@@ -966,7 +966,7 @@ proc wrapAllBlock(id: EcsIdentity, name: string, sysIndex: SystemIndex, options:
   let
     # `sys` is the system variable parameter passed to the doProc.
     sys = ident "sys"
-    cacheId = quote do: EcsIdentity(`id`)
+    cacheId = quote do: `id`
     groupIndex = ident "groupIndex"
     idx = genSym(nskVar, "i")
     sysLen = ident "sysLen"
@@ -1101,7 +1101,7 @@ proc wrapStreamBlock(id: EcsIdentity, name: string, sysIndex: SystemIndex, optio
   let
     # `sys` is the system variable parameter passed to the doProc.
     sys = ident "sys"
-    cacheId = quote do: EcsIdentity(`id`)
+    cacheId = quote do: `id`
     groupIndex = ident "groupIndex"
     sysLen = ident "sysLen"
 
@@ -1400,36 +1400,36 @@ proc generateSystem(id: EcsIdentity, sysIndex: SystemIndex, options: ECSSysOptio
   # Compile time system state change detection.
 
   let
-    cacheId = quote do: EcsIdentity(`id`)
+    cacheId = quote do: `id`
 
     staticInit = quote do:
       # Record entry into system iteration in the static environment.
       `set_inSystem`(`cacheId`, true)
-      `set_inSystemIndex`(`cacheId`, `sysIndex`.SystemIndex)
+      `set_inSystemIndex`(`cacheId`, `sysIndex`)
       `set_sysRemoveAffectedThisSystem`(`cacheId`, false)
       `set_systemCalledDelete`(`cacheId`, false)
       const
         errPrelude = "Internal error: "
         internalError = " macrocache storage is unexpectedly populated for system \"" & `name` & "\""
-      assert `readsFrom`(`cacheId`, `sysIndex`.SystemIndex).len == 0, errPrelude & "readsFrom" & internalError
-      assert `writesTo`(`cacheId`, `sysIndex`.SystemIndex).len == 0, errPrelude & "writesTo" & internalError
+      assert `readsFrom`(`cacheId`, `sysIndex`).len == 0, errPrelude & "readsFrom" & internalError
+      assert `writesTo`(`cacheId`, `sysIndex`).len == 0, errPrelude & "writesTo" & internalError
     
-    # Explicitly bind 'commaSeparate' to avoid injection ambiguity.
-    comSep = bindSym("commaSeparate")
-
     reportPerformance =
       when defined(ecsPerformanceHints):
+        let
+          comSep = bindSym("commaSeparate")
+
         quote do:
           # Reports system component access and performance hints.
           # Each component access is displayed in order of access
           # within the system.
           const prefix {.used.} = "System \"" & `name` & "\""
-          when `len_readsFrom`(`cacheId`, `sysIndex`.SystemIndex) > 0:
-            debugPerformance `cacheId`, prefix & ": Reads from: " &
-              `comSep`(`cacheId`, `readsFrom`(`cacheId`, `sysIndex`.SystemIndex))
-          when `len_writesTo`(`cacheId`, `sysIndex`.SystemIndex) > 0:
-            debugPerformance `cacheId`, prefix & ": Writes to: " &
-              `comSep`(`cacheId`, `writesTo`(`cacheId`, `sysIndex`.SystemIndex))
+          when `len_readsFrom`(`cacheId`, `sysIndex`) > 0:
+            debugPerformance `cacheId`, prefix & " reads from: " &
+              `comSep`(`cacheId`, `readsFrom`(`cacheId`, `sysIndex`))
+          when `len_writesTo`(`cacheId`, `sysIndex`) > 0:
+            debugPerformance `cacheId`, prefix & " writes to: " &
+              `comSep`(`cacheId`, `writesTo`(`cacheId`, `sysIndex`))
           when `systemCalledDelete`(`cacheId`):
             debugPerformance `cacheId`, prefix & " uses an arbitrary delete, length must be checked each iteration (source: " &
               `ecsSystemDeleteLoc`(`cacheId`) & ")"
@@ -1488,7 +1488,7 @@ proc generateSystem(id: EcsIdentity, sysIndex: SystemIndex, options: ECSSysOptio
       timeImports = quote do:
         when not declared(cpuTime):
           static:
-            if EcsIdentity(`id`).private:
+            if `id`.private:
               error "Need 'times.cpuTime'" & cannotImport
           from times import cpuTime
   

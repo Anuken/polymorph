@@ -200,7 +200,7 @@ proc doRegisterComponents(id: EcsIdentity, options: ECSCompOptions, body: NimNod
     # The same value is returned for a concrete instance, ref instance, and typedesc.
     afterComponentDef.add(quote do:
       func `typeIdAccessName`*(`tyParam`: `typeNameIdent` | `refTypeNameIdent` | `instTypeNode` | typedesc[`typeNameIdent`] | typedesc[`refTypeNameIdent`] | typedesc[`instTypeNode`]): ComponentTypeId =
-        `typeId`.ComponentTypeId
+        `typeId`
       
       template `refTypeAccessName`*(`tyParam`: typedesc[`typeNameIdent`] | typedesc[`instTypeNode`]): typedesc = `refTypeNameIdent`
     )
@@ -360,16 +360,16 @@ proc genTypeAccess*(id: EcsIdentity): NimNode =
       perfRead =
         when defined(ecsPerformanceHints): quote do:
           static:
-            if `inSystem`(`identity`):
-              `add_readsFrom`(`identity`, `inSystemIndex`(`identity`), `typeId`.ComponentTypeId)
+            if `inSystem`(`id`):
+              `add_readsFrom`(`id`, `inSystemIndex`(`id`), `typeId`)
         else:
           newStmtList()
       
       perfWrite =
         when defined(ecsPerformanceHints): quote do:
           static:
-            if `inSystem`(`identity`):
-              `add_writesTo`(`identity`, `inSystemIndex`(`identity`), `typeId`.ComponentTypeId)
+            if `inSystem`(`id`):
+              `add_writesTo`(`id`, `inSystemIndex`(`id`), `typeId`)
         else:
           newStmtList()
 
@@ -497,7 +497,7 @@ proc genTypeAccess*(id: EcsIdentity): NimNode =
         template componentCount*(value: typedesc[`typeNameIdent`] | typedesc[`instanceTypeIdent`]): int = `ownerSystem`.count
         ## Allows access to the owning system's `groups` field that stores components of this type.
         template componentStorage*(value: typedesc[`instanceTypeIdent`] | `instanceTypeIdent` | `typeNameIdent`): untyped = `ownerSystem`.groups
-        template ownerSystemIndex*(value: typedesc[`instanceTypeIdent`] | `instanceTypeIdent` | `typeNameIdent`): untyped = `sysOwner`.SystemIndex
+        template ownerSystemIndex*(value: typedesc[`instanceTypeIdent`] | `instanceTypeIdent` | `typeNameIdent`): untyped = `sysOwner`
         template ownerSystem*(value: typedesc[`instanceTypeIdent`] | `instanceTypeIdent` | `typeNameIdent`): untyped = `ownerSystem`
       )
     else:
