@@ -131,7 +131,6 @@ proc doRegisterComponents(id: EcsIdentity, options: ECSCompOptions, body: NimNod
     case tyDef.kind
       
       of nnkTypeDef:
-        typeNameIdent = tyDef[0].basename
         const
           notComponentStr = "notComponent"
           pragExpr = 0
@@ -178,6 +177,7 @@ proc doRegisterComponents(id: EcsIdentity, options: ECSCompOptions, body: NimNod
       refTypeAccessName = newIdentNode("refType")
       tyParam = newIdentNode("ty")
       refTypeNameIdent = newIdentNode(refTypeName(typeNameStr))
+      setTypeIdParam = newIdentNode "setTypeId"
     
     registered.add typeNameStr
 
@@ -203,6 +203,40 @@ proc doRegisterComponents(id: EcsIdentity, options: ECSCompOptions, body: NimNod
         `typeId`
       
       template `refTypeAccessName`*(`tyParam`: typedesc[`typeNameIdent`] | typedesc[`instTypeNode`]): typedesc = `refTypeNameIdent`
+
+      template containerType*(`tyParam`: typedesc[`typeNameIdent`]): untyped =
+        ## Compile-time translation between a user's type to its container
+        ## `ref` type for adding to a constructable `ComponentList`.
+        `refTypeNameIdent`
+      
+      template containerType*(`tyParam`: typedesc[`instTypeNode`]): untyped =
+        ## Compile-time translation between the instance type of a component
+        ## to its container `ref` type for adding to a constructable
+        ## `ComponentList`.
+        `refTypeNameIdent`
+
+      func makeContainer*(`tyParam`: `typeNameIdent`): `refTypeNameIdent` =
+        ## Create a `ref` container object from a user object for adding
+        ## to a constructable `ComponentList`.
+        `refTypeNameIdent`(fTypeId: `typeId`, value: `tyParam`)
+
+      template makeContainer*(`tyParam`: `instTypeNode`): `refTypeNameIdent` =
+        ## Create a `ref` container from an instance.
+        `tyParam`.access.makeContainer()
+
+      proc add*(items: var ComponentList, component: `typeNameIdent`) =
+        ## Add a component to a component list, automatically handling
+        ## `typeId`.
+        system.add items, component.makeContainer()
+        assert items[^1].typeId != InvalidComponent,
+          "Internal error, could not resolve type id for " & $component.type
+
+      template add*(items: var ComponentList, component: `refTypeNameIdent`) =
+        ## Add a component to a component list, checking `typeId` is set up.
+        assert items[^1].typeId != InvalidComponent,
+          "Error type id is not set for " & $component.type & ". Use 'makeContainer' or add the source type instead"
+        system.add items, component
+
     )
 
   if id.components.len == previousComponentsDeclared:
@@ -245,22 +279,9 @@ proc generateTypeStorage*(id: EcsIdentity): NimNode =
       options = id.getOptions(typeId)
       typeNameStr = id.typeName typeId
       typeNameIdent = ident typeNameStr
-      refTypeNameIdent = newIdentNode(refTypeName(typeNameStr))
-      tyParam = newIdentNode("ty")
       maxComponentCount = options.maxComponents + 2
       instTypeNode = newIdentNode instanceTypeName(typeNameStr)
       storageFieldName = typeNameStr.storageFieldName
-
-    typeUtils.add(quote do:
-      ## Compile-time translation between a user's type to its container `ref` type.
-      template containerType*(`tyParam`: typedesc[`typeNameIdent`] | typedesc[`instTypeNode`]): untyped = `refTypeNameIdent`
-      ## Create a `ref` container from a user object.
-      template makeContainer*(`tyParam`: `typeNameIdent`): `refTypeNameIdent` =
-        `refTypeNameIdent`(fTypeId: `typeId`.ComponentTypeId, value: `tyParam`)
-      ## Create a `ref` container from an instance.
-      template makeContainer*(`tyParam`: `instTypeNode`): `refTypeNameIdent` =
-        `tyParam`.access.makeContainer()
-    )
 
     proc storageField(typeIdent: NimNode, maxComps: int): NimNode =
       case options.componentStorageFormat
@@ -326,8 +347,6 @@ proc genTypeAccess*(id: EcsIdentity): NimNode =
   var
     typeAccess = newStmtList()
     firstCompIdInits = newStmtList()
-  let
-    identity = quote do: EcsIdentity(`id`)
 
   result = newStmtList()
   for c in id.building(id.allUnsealedComponents):
@@ -741,7 +760,13 @@ proc genTypeAccess*(id: EcsIdentity): NimNode =
         let i = inst  # Prevents duplicate instantiation of `inst`.
         (i.typeId, i.ComponentIndex, i.generation)
     )
-  
+    if not id.private:
+      typeAccess.add(quote do:
+        converter accessValue*(`instParam`: `instanceTypeIdent`): `typeNameIdent` =
+          ## Implicitly convert a component instance to its native type
+          ## using `access`.
+          `instParam`.access
+      )
   result.add typeAccess
   result.add firstCompIdInits
 
@@ -763,16 +788,12 @@ proc genTypeAccess*(id: EcsIdentity): NimNode =
   # Add an `add` for `ComponentList` that handles `typeId`.
   let
     allCompsTC = ident typeClassName()
-    allInstTC = ident instanceTypeClassName()
-    allRefCompsTc = ident refTypeClassName()
     iFound = ident "found"
     iValue = ident "value"
 
-
   result.add(quote do:
 
-
-    template find*[T: `allCompsTC`](compRefs: ComponentList, findType: typedesc[T]): tuple[`iFound`: bool, `iValue`: T] =
+    template findValue*[T: `allCompsTC`](compRefs: ComponentList, findType: typedesc[T]): tuple[`iFound`: bool, `iValue`: T] =
       ## Find and return a component type in a `ComponentList`.
       ## When the list contains the type, `result.found` is true and a
       ## copy of the data is placed in `result.value`.
@@ -794,30 +815,15 @@ proc genTypeAccess*(id: EcsIdentity): NimNode =
         r.`iValue` = findType.refType()(compRefs[idx]).value
       r
 
-
-    proc add*(items: var ComponentList, component: `allCompsTC`|`allInstTC`|`allRefCompsTc`) =
-      ## Add a component to a component list, automatically handling `typeId`.
-      when component is `allRefCompsTc`:
-        const cRange = `identity`.typeIdRange()
-        if component.typeId.int notin cRange.a.int .. cRange.b.int:
-          # Attempt to determine the typeId.
-          var copy = component
-          copy.fTypeId = component.typeId()
-          system.add items, copy
-        else:
-          system.add items, component
-      else:
-        system.add items, component.makeContainer()
-      assert items[^1].typeId != InvalidComponent,
-        "Could not resolve type id for " & $component.type
-    )
+  )
 
 
 macro find*(id: static[EcsIdentity], cList: ComponentList, types: varargs[typed]): untyped =
   ## Build a single pass operation to find the values of particular
   ## component types in a `ComponentList`.
   ## 
-  ## The resulting tuple contains a field for each type in `types`.
+  ## The resulting tuple contains a (found, value) pair for each type in
+  ## `types`.
   ## 
   ## Example:
   ## 
@@ -850,6 +856,7 @@ macro find*(id: static[EcsIdentity], cList: ComponentList, types: varargs[typed]
 
     fieldCounter = genSym(nskVar, "fieldCounter")
     curCompRef = genSym(nskForVar, "curCompRef")
+    itemIndex = genSym(nskForVar, "index")
 
     exitConditions =
       if multipleFetches:
@@ -863,7 +870,6 @@ macro find*(id: static[EcsIdentity], cList: ComponentList, types: varargs[typed]
 
   var
     tupleTy = nnkTupleTy.newTree()
-    inner = newStmtList()
     blk = newStmtList()
 
   if multipleFetches:
@@ -883,11 +889,12 @@ macro find*(id: static[EcsIdentity], cList: ComponentList, types: varargs[typed]
       ty = ident tyStr
       refTy = ident refTypeName(tyStr)
 
-    # Append fields to the result tuple.
+    # Create fields in the result tuple.
     tupleTy.add newIdentDefs(lcField,
       nnkTupleTy.newTree(
         newIdentDefs(ident "found", ident "bool"),
-        newIdentDefs(ident "value", ty)
+        newIdentDefs(ident "value", ty),
+        newIdentDefs(ident "index", ident "int"),
       )
     )
 
@@ -897,13 +904,14 @@ macro find*(id: static[EcsIdentity], cList: ComponentList, types: varargs[typed]
       quote do:
         `res`.`lcField`.found = true
         `res`.`lcField`.value = `refTy`(`curCompRef`).value
+        `res`.`lcField`.index = `itemIndex`
         `exitConditions`
     )
   fetchCase.add nnkElse.newTree(nnkDiscardStmt.newTree(newEmptyNode()))
 
   blk.add(quote do:
     var `res`: `tupleTy`
-    for `curCompRef` in `cList`:
+    for `itemIndex`, `curCompRef` in `cList`:
       `fetchCase`
     `res`
   )
@@ -932,9 +940,8 @@ macro cl*(items: varargs[untyped]): untyped =
 
   for item in items:
     result.add(quote do:
-      add(`res`, `item`)
-      
       {.line.}:
+        add(`res`, `item`)
         assert `res`[^1].typeId.int != InvalidComponent.int,
           "Add type id failed"
     )
@@ -981,6 +988,10 @@ macro registerComponents*(id: static[EcsIdentity], options: static[ECSCompOption
 
 template register*(id: static[EcsIdentity], options: static[ECSCompOptions], body: untyped): untyped =
   registerComponents(id, options, body)
+
+
+template register*(id: static[EcsIdentity], body: untyped): untyped =
+  registerComponents(id, defaultCompOpts, body)
 
 
 macro registerComponentsFromFile*(id: EcsIdentity, compOpts: ECSCompOptions, filename: static[string]): untyped =
@@ -1094,9 +1105,16 @@ template register*(compOpts: ECSCompOptions, body: untyped): untyped =
   defaultIdentity.registerComponents(compOpts, body)
 
 
+template register*(body: untyped): untyped =
+  registerComponents(defaultIdentity, defaultCompOpts, body)
+
+
 proc genForAllComponents(id: EcsIdentity, typeId: ComponentTypeId, actions: NimNode): NimNode =
+  ## Perform `actions` for every instance of the component type given
+  ## by `typeId`.
   let
     n = id.typeName typeId
+    ty = ident n
     instType = newIdentNode instanceTypeName(n)
     accessArray = newIdentNode storageFieldName(n)
 
@@ -1104,34 +1122,119 @@ proc genForAllComponents(id: EcsIdentity, typeId: ComponentTypeId, actions: NimN
     template componentTypeId: untyped = `typeId`
     template componentName: untyped = `n`
     template componentInstType: untyped = `instType`
+    template componentType: untyped = `ty`
+
     for i in 0 ..< `accessArray`.len:
+      # Access each instance of the type in storage.
       template index: untyped = i
       template component: untyped = `accessArray`[i]
       `actions`
 
 
 macro forAllComponents*(id: static[EcsIdentity], typeId: static[ComponentTypeId], actions: untyped): untyped =
-  ## Perform `actions` for every component of run time type `typeId`.
+  ## Perform `actions` for every run time instance of the component type
+  ## referenced by `typeId`.
+  ## 
+  ## Note that the first component instance for each type (`index() == 0`)
+  ## is the storage slot reserved for 'invalid' components of the type.
+  ## 
+  ## The following templates are accessible by `actions`:
+  ## 
+  ##     `componentTypeId()`: the `ComponentTypeId` of the component.
+  ##     `componentName()`: the string of the component's type.
+  ##     `componentInstType()`: the instance type of the component.
+  ##     `componentType()`: the type of the component.
+  ##     `index()`: the index into the component storage for this instance.
+  ##     `component()`: the data of this component instance.
+  ## 
   id.genForAllComponents(typeId, actions)
 
 
-template forAllComponents*(id: static[EcsIdentity], typeVal: typedesc, actions: untyped): untyped =
-  id.forAllComponents(typeVal.typeId, actions)
+template forAllComponents*(id: static[EcsIdentity], componentType: typedesc, actions: untyped): untyped =
+  ## Perform `actions` for every run time instance of components of type
+  ## `componentType`.
+  ## 
+  ## Note that the first component instance for each type (`index() == 0`)
+  ## is the storage slot reserved for 'invalid' components of the type.
+  ## 
+  ## The following templates are accessible by `actions`:
+  ## 
+  ##     `componentTypeId()`: the `ComponentTypeId` of the component.
+  ##     `componentName()`: the string of the component's type.
+  ##     `componentInstType()`: the instance type of the component.
+  ##     `componentType()`: the type of the component.
+  ##     `index()`: the index into the component storage for this instance.
+  ##     `component()`: the data of this component instance.
+  ## 
+  id.forAllComponents(componentType.typeId, actions)
+
+
+template forAllComponents*(typeId: static[ComponentTypeId], actions: untyped): untyped =
+  ## Perform `actions` for every run time instance of the component type
+  ## referenced by `typeId` in the `defaultIdentity`.
+  ## 
+  ## Note that the first component instance for each type (`index() == 0`)
+  ## is the storage slot reserved for 'invalid' components of the type.
+  ## 
+  ## The following templates are accessible by `actions`:
+  ## 
+  ##     `componentTypeId()`: the `ComponentTypeId` of the component.
+  ##     `componentName()`: the string of the component's type.
+  ##     `componentInstType()`: the instance type of the component.
+  ##     `componentType()`: the type of the component.
+  ##     `index()`: the index into the component storage for this instance.
+  ##     `component()`: the data of this component instance.
+  ## 
+  defaultIdentity.forAllComponents(typeId, actions)
+
+
+template forAllComponents*(componentType: typedesc, actions: untyped): untyped =
+  ## Perform `actions` for every run time instance of components of type
+  ## `componentType` in the `defaultIdentity`.
+  ## 
+  ## Note that the first component instance for each type (`index() == 0`)
+  ## is the storage slot reserved for 'invalid' components of the type.
+  ## 
+  ## The following templates are accessible by `actions`:
+  ## 
+  ##     `componentTypeId()`: the `ComponentTypeId` of the component.
+  ##     `componentName()`: the string of the component's type.
+  ##     `componentInstType()`: the instance type of the component.
+  ##     `componentType()`: the type of the component.
+  ##     `index()`: the index into the component storage for this instance.
+  ##     `component()`: the data of this component instance.
+  ## 
+  defaultIdentity.forAllComponents(componentType.typeId, actions)
 
 
 macro forAllComponentTypes*(id: static[EcsIdentity], actions: untyped): untyped =
   ## Perform `actions` for every component type currently defined,
   ## not including InvalidComponent.
+  ## 
+  ## The following templates are accessible by `actions`:
+  ## 
+  ##     `componentTypeId()`: the `ComponentTypeId` of the component.
+  ##     `componentName()`: the string of the component's type.
+  ##     `componentInstType()`: the instance type of the component.
+  ##     `componentType()`: the type of the component.
+  ## 
   result = newStmtList()
-  for typeId in id.allComponentsSeq:
-    result.add id.genForAllComponents(typeId, actions)
+  for info in id.building(id.allComponentsSeq):
+    let
+      tyStr = info.name
+      tyId = info.typeId
+      ty = ident tyStr
+      tyInst = info.instanceTy.copy
 
+    result.add(
+      quote do:
+        template componentTypeId: ComponentTypeId = `tyId`
+        template componentName: string = `tyStr`
+        template componentInstType: untyped = `tyInst`
+        template componentType: untyped = `ty`
 
-macro clearAll*(): untyped =
-  result = quote do:
-    forAllComponentTypes:
-      forAllComponents:
-        typeId.clear
+        `actions`
+    )
 
 
 proc toInt*(c: ComponentTypeId): int = c.int

@@ -907,7 +907,7 @@ proc makeStateChanges*(id: EcsIdentity): NimNode =
             `res` = fetched
           else:
             # Add as normal.
-            `res` = addComponent(`entity`, component)
+            `res` = addComponents(`entity`, component)[0]
 
         proc addIfMissing*[T: ComponentTypeclass](`entity`: EntityRef, component: T): auto {.discardable.} =
           ## Add a component only if it isn't already present.
@@ -915,7 +915,7 @@ proc makeStateChanges*(id: EcsIdentity): NimNode =
           ## If the component isn't present, it will be added and the instance is returned.
 
           if not `entity`.hasComponent typedesc[T]:
-            `res` = addComponent(`entity`, component)
+            `res` = addComponents(`entity`, component)[0]
 
         proc fetchOrAdd*[T: ComponentTypeclass](`entity`: EntityRef, component: typedesc[T]): auto {.discardable.} =
           ## Fetch an existing component type if present, otherwise add
@@ -926,7 +926,7 @@ proc makeStateChanges*(id: EcsIdentity): NimNode =
           ## data.
           `res` = `entity`.fetchComponent typedesc[T]
           if not `res`.valid:
-            `res` = addComponent(`entity`, component())
+            `res` = addComponents(`entity`, default(component))[0]
     )
 
   result.add(quote do:

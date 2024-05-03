@@ -587,8 +587,16 @@ proc makeRuntimeStrOutput(id: EcsIdentity): NimNode =
         if `showData`:
           `res` &= ": "
           try:
-            `res` &= `strOp`(componentInstanceType()(componentRef.index.int).access)
-          except:
+            let
+              inst = componentInstanceType()(componentRef.index.int)
+              value = access(inst)
+
+            when not(value is ComponentRef):
+              `res` &= $value
+            else:
+              `res` &= repr(value)
+
+          except CatchableError:
             `res` &= "<ERROR ACCESSING (index: " & `strOp`(componentRef.index.int) & ", count: " &
               $(componentInstanceType().componentCount).int & ")>\n"
 
@@ -600,7 +608,11 @@ proc makeRuntimeStrOutput(id: EcsIdentity): NimNode =
       caseComponent comp.typeId:
         `res` &= `compName`
         if `showData`:
-          `res` &= ": " & $componentRefType()(comp).value & "\n"
+          let container = componentRefType()(comp)
+          when compiles($container.value):
+            `res` &= ": " & $container.value & "\n"
+          else:
+            `res` &= ": " & container.value.repr & "\n"
     
     proc `strOp`*(comp: Component): string = comp.toString
 
@@ -710,6 +722,7 @@ proc makeRuntimeDebugOutput(id: EcsIdentity): NimNode =
   let
     res = ident("result")
     entity = ident("entity")
+    entities = ident("entities")
     totalCount = id.len_systems - 1 # Don't count InvalidSystem entry.
     tsc = ident("totalSystemCount")
     strOp = nnkAccQuoted.newTree(ident "$")
@@ -771,11 +784,11 @@ proc makeRuntimeDebugOutput(id: EcsIdentity): NimNode =
             # $typeId returns the string of the storage type for this component.
             if owned:
               if not compRef.alive:
-                compDesc &= " <DEAD OWNED COMPONENT Type: " & `strOp`(compRef.typeId) & ", generation: " & genStr & ">\n"
+                compDesc &= " <DEAD OWNED COMPONENT Type: " & `strOp`(compRef.typeId) & ", generation: " & genStr & ">"
 
             else:
               if not compRef.valid:
-                compDesc &= " <INVALID COMPONENT Type: " & `strOp`(compRef.typeId) & ", generation: " & genStr & ">\n"
+                compDesc &= " <INVALID COMPONENT Type: " & `strOp`(compRef.typeId) & ", generation: " & genStr & ">"
             
             `res` &= compDesc & "\n"
 
@@ -816,6 +829,13 @@ proc makeRuntimeDebugOutput(id: EcsIdentity): NimNode =
       ## Display the entity currently instantiated for this `EntityId`.
       `strOp`(`entity`.makeRef)
 
+    proc toString*(`entities`: openArray[EntityRef]): string =
+      ## Display an indented list of entities.
+      result = "[\n  " & $`entities`.len & " entities.\n\n"
+      for e in `entities`:
+        result &= `indentStr`($e, 2) & ",\n\n"
+      result &= "]"
+
     proc `strOp`*(sysIdx: SystemIndex): string =
       ## Outputs the system name passed to `sysIdx`.
       caseSystem sysIdx:
@@ -853,7 +873,7 @@ proc makeRuntimeDebugOutput(id: EcsIdentity): NimNode =
       mixin name
       `res`.name = sys.name
 
-      template getAddressInt(value: untyped): int =
+      template getAddressInt(value: untyped): int {.used.} =
         var address: pointer
         when value is `componentIndexTC`:
           # Standard index components.
@@ -936,7 +956,7 @@ proc makeRuntimeDebugOutput(id: EcsIdentity): NimNode =
 
               component(fieldIdx).allData.`statsPush` diff
 
-              if diff < 0:
+              if diff < -thresh:
                 component(fieldIdx).backwardsJumps += 1
                 tagged = true
               elif diff > thresh:
@@ -1018,9 +1038,9 @@ proc makeRuntimeDebugOutput(id: EcsIdentity): NimNode =
           func dataStr(data: RunningStat): string =
 
             func eqTol(a, b: float, tol = 0.001): bool = abs(a - b) < tol
-            
+
             let
-              exKurt = data.kurtosis - 3.0
+              exKurt = if data.variance > 0: data.kurtosis - 3.0 else: 0.0
               dataRange = data.max - data.min
             const
               cont = -6/5
@@ -1232,7 +1252,7 @@ proc makeCaseComponent(id: EcsIdentity): NimNode =
     # Following templates are available for use within the case statement.
     # These aren't compiled in unless the invoker uses them.
     ofNode.add(quote do:
-      template componentId: untyped {.used.} = `component`.ComponentTypeId
+      template componentId: untyped {.used.} = `component`
       template componentName: untyped {.used.} = `tyStr`
       template componentType: untyped {.used.} = `ty`
       template componentRefType: untyped {.used.} = `tyRef`
@@ -1376,7 +1396,7 @@ proc makeCompRefAlive: NimNode =
       let index = compRef.index.int
       var r: bool
       caseComponent compRef.typeId:
-        r = componentAlive()[index] and compRef.generation.int == componentGenerations()[index]
+        r = index < componentAlive().len and componentAlive()[index] and compRef.generation.int == componentGenerations()[index]
       r
 
 
@@ -1443,9 +1463,9 @@ proc sealEntities(id: EcsIdentity): NimNode =
   result.add id.genSystemSet()
 
   result.add makeEntities(id)
+  result.add makeCaseComponent(id)
   result.add makeCompRefAlive()
   result.add makeFetchComponents(id)
-  result.add makeCaseComponent(id)
   result.add makeMatchSystem(id)
 
   var
@@ -1502,7 +1522,7 @@ proc sealStateChanges(id: EcsIdentity): NimNode =
           # within an event expects 'curEntity' from 'userEntAccess'.
           assert `deleteEntParam` != curEntity(), "Delete cannot remove the current event entity"
       
-      doDelete(`deleteEntParam`)
+      `delProcName`(`deleteEntParam`)
   )
 
   result.add makeStateChanges(id)
