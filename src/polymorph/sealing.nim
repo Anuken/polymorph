@@ -243,25 +243,37 @@ proc makeEntitySupport(entOpts: ECSEntityOptions): NimNode =
       if entOpts.useSet:
         let setType = ident componentsEnumName()
         quote do:
-          return `componentTypeId`.`setType` in entityData(`entIdNode`).exists
+          `componentTypeId`.`setType` in entityData(`entIdNode`).exists
       else:
         case entOpts.componentStorageFormat
-        of csTable:
-          quote do:
-            return entityData(`entIdNode`).componentRefs.hasKey(`componentTypeId`)
-        of csSeq:
-          quote do:
-            for c in entityData(`entIdNode`).componentRefs:
-              if c.typeId == `componentTypeId`:
-                return true
-        of csArray:
-          quote do:
-            for i in 0 ..< entityData(`entIdNode`).nextCompIdx:
-              let c = entityData(`entIdNode`).componentRefs[i]
-              if c.typeId == `componentTypeId`:
-                return true
+
+          of csTable:
+            quote do:
+              entityData(`entIdNode`).componentRefs.hasKey(`componentTypeId`)
+
+          of csSeq:
+            quote do:
+              block:
+                var f: bool
+                for c in entityData(`entIdNode`).componentRefs:
+                  if c.typeId == `componentTypeId`:
+                    f = true
+                    break
+                f
+          of csArray:
+            quote do:
+              block:
+                var f: bool
+                for i in 0 ..< entityData(`entIdNode`).nextCompIdx:
+                  let c = entityData(`entIdNode`).componentRefs[i]
+                  if c.typeId == `componentTypeId`:
+                    f = true
+                    break
+                f
+
   result = newStmtList()
   result.add(quote do:
+
     proc hasComponent*(`entity`: EntityRef, `componentTypeId`: ComponentTypeId): bool =
       let `entIdNode` = `entity`.entityId
       
@@ -273,8 +285,24 @@ proc makeEntitySupport(entOpts: ECSEntityOptions): NimNode =
         assert false, str
       
       if entityData(`entIdNode`).setup:
-        `hasCore`
-    
+        return `hasCore`
+
+    proc hasComponents*(`entity`: EntityRef, types: openArray[ComponentTypeId]): bool =
+      ## Match an entity against a list of component types.
+      let `entIdNode` = `entity`.entityId
+
+      if `entity`.alive and entityData(`entIdNode`).setup:
+        for `componentTypeId` in types:
+          if not `hasCore`:
+            return false
+        true
+      else:
+        false
+
+    template has*(`entity`: EntityRef, types: openArray[ComponentTypeId]): bool =
+      hasComponents(`entity`, types)
+
+
     template hasComponent*(entity: EntityRef, t: typedesc[`typeClass`]): untyped =
       # TODO: doesn't support components that aren't objects, eg `registerComponent: MyComp = seq[T]`.
       entity.hasComponent t.typeId
