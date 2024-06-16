@@ -171,10 +171,12 @@ const
   sysVarPrefix = "sys"
   sysItemNamePrefix = "SysItem"  # capitalisation for type
   doProcPrefix = "do"
+  initProcPrefix = "init"
   instPostfix* = ""
 
 func itemTypeName*(name: string): string = sysItemNamePrefix & name.capitalizeAscii
 func doProcName*(name: string): string = doProcPrefix & name.capitalizeAscii
+func doSysInitName*(name: string): string = initProcPrefix & name.capitalizeAscii
 func systemVarName*(name: string): string = sysVarPrefix & name.capitalizeAscii
 func addCallbackName*(name: string): string = "addCallback" & name
 func removeCallbackName*(name: string): string = "removeCallback" & name
@@ -1156,7 +1158,6 @@ iterator typeDefs*(body: NimNode): (int, NimNode) =
 
 proc getTypeStr(compNode: NimNode): string =
   ## Extract the type of a symbol.
-
   let
     tyInst = compNode.getTypeInst()
   

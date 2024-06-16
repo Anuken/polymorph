@@ -1435,7 +1435,7 @@ proc generateSystem(id: EcsIdentity, sysIndex: SystemIndex, options: ECSSysOptio
               `ecsSystemDeleteLoc`(`cacheId`) & ")"
           elif `sysRemoveAffectedThisSystem`(`cacheId`):
             debugPerformance `cacheId`, prefix &
-              " can remove items from this system, length must be checked each iteration (source: " &
+              " can remove items from itself, length must be checked each iteration (source: " &
               `ecsSystemRemoveLoc`(`cacheId`) & ")"
 
       else:
@@ -1461,6 +1461,8 @@ proc generateSystem(id: EcsIdentity, sysIndex: SystemIndex, options: ECSSysOptio
     sysVar = ident(systemVarName(name))
     systemComment = newCommentStmtNode("System \"" & name & "\", using components: " & sysTypeNames)
     doSystem = ident doProcName(name)
+    doSystemInit = ident doSysInitName(name)
+
     initWrapper =
       if initBodies.len > 0:
         quote do:
@@ -1501,13 +1503,19 @@ proc generateSystem(id: EcsIdentity, sysIndex: SystemIndex, options: ECSSysOptio
 
   quote do:
     `timeImports`
+
+    proc `doSystemInit`* =
+      ## `init:` block for this system.
+      template sys: untyped {.used.} = `sysVar`
+      `initWrapper`
+
     proc `doSystem`*(`sys`: var `sysType`) =
       `systemComment`
 
       `echoRun`
       if `runCheck`:
         `initRunEvery`
-        `initWrapper`
+        `doSystemInit`()
         `startBodies`
         static:
           `staticInit`
@@ -1810,7 +1818,6 @@ template makeSystem*(name: static[string], componentTypes: untyped, systemBody: 
   ## 
   ## Previously defined systems carry their options over, otherwise `defaultSystemOptions` is used.
   defaultIdentity.makeSystem(name, componentTypes, systemBody)
-
 
 template makeSystem*(name: static[string], systemBody: untyped): untyped =
   ## Define a system and/or add a system code body using the default ECS identity.
