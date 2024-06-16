@@ -226,7 +226,7 @@ proc makeEntityState(options: ECSEntityOptions): NimNode =
     template components*(entity: EntityRef, index: int): untyped =
       ## Access to entity's components.
       assert entity.alive
-      entityData(entityId).componentRefs[index]
+      entityData(entity.entityId).componentRefs[index]
     template withComponent*(entity: EntityRef, t: typedesc[`typeClass`], actions: untyped): untyped =
       block:
         let component {.inject.} = entity.fetchComponent(t)
