@@ -543,7 +543,7 @@ proc makeRuntimeConstruction*(id: EcsIdentity): NimNode =
         static: startOperation(`id`, "construct")
         `res` = newEntity()
         let
-          `contextEntity` =
+          `contextEntity` {.used.} =
             if `context`.entityId != NO_ENTITY:
               `context`
             else:
