@@ -1209,17 +1209,7 @@ template forAllComponents*(componentType: typedesc, actions: untyped): untyped =
   defaultIdentity.forAllComponents(componentType.typeId, actions)
 
 
-macro forAllComponentTypes*(id: static[EcsIdentity], actions: untyped): untyped =
-  ## Perform `actions` for every component type currently defined,
-  ## not including InvalidComponent.
-  ## 
-  ## The following templates are accessible by `actions`:
-  ## 
-  ##     `componentTypeId()`: the `ComponentTypeId` of the component.
-  ##     `componentName()`: the string of the component's type.
-  ##     `componentInstType()`: the instance type of the component.
-  ##     `componentType()`: the type of the component.
-  ## 
+proc doForAllComponentTypes(id: EcsIdentity, actions: NimNode): NimNode =
   result = newStmtList()
   for info in id.building(id.allComponentsSeq):
     let
@@ -1230,13 +1220,42 @@ macro forAllComponentTypes*(id: static[EcsIdentity], actions: untyped): untyped 
 
     result.add(
       quote do:
-        template componentTypeId: ComponentTypeId = `tyId`
-        template componentName: string = `tyStr`
-        template componentInstType: untyped = `tyInst`
-        template componentType: untyped = `ty`
+        block:
+          template componentTypeId: ComponentTypeId = `tyId`
+          template componentName: string = `tyStr`
+          template componentInstType: untyped = `tyInst`
+          template componentType: untyped = `ty`
 
-        `actions`
+          `actions`
     )
+
+
+macro forAllComponentTypesById*(id: static[EcsIdentity], actions: untyped): untyped =
+  ## Perform `actions` for every component type currently defined for
+  ## the identity `id`.
+  ## 
+  ## The following templates are accessible by `actions`:
+  ## 
+  ##     `componentTypeId()`: the `ComponentTypeId` of the component.
+  ##     `componentName()`: the string of the component's type.
+  ##     `componentInstType()`: the instance type of the component.
+  ##     `componentType()`: the type of the component.
+  ## 
+  id.doForAllComponentTypes(actions)
+
+
+macro forAllComponentTypes*(actions: untyped): untyped =
+  ## Perform `actions` for every component type currently defined for
+  ## the default identity.
+  ## 
+  ## The following templates are accessible by `actions`:
+  ## 
+  ##     `componentTypeId()`: the `ComponentTypeId` of the component.
+  ##     `componentName()`: the string of the component's type.
+  ##     `componentInstType()`: the instance type of the component.
+  ##     `componentType()`: the type of the component.
+  ##
+  defaultIdentity.doForAllComponentTypes(actions)
 
 
 proc toInt*(c: ComponentTypeId): int = c.int
