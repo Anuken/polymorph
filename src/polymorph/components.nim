@@ -929,22 +929,24 @@ macro cl*(items: varargs[untyped]): untyped =
   ## ref template types.
   ## 
   ## Requires components to be registered.
-  result = newStmtList()
+  var inner = newStmtList()
   let
     res = genSym(nskVar, "cl")
     length = newLit items.len
-  result.add(quote do:
+  inner.add(quote do:
     var `res` = newSeqOfCap[Component](`length`)
   )
 
   for item in items:
-    result.add(quote do:
+    inner.add(quote do:
       {.line.}:
         add(`res`, `item`)
         assert `res`[^1].typeId.int != InvalidComponent.int,
           "Add type id failed"
     )
-  result.add(res)
+  inner.add(res)
+  newBlockStmt(inner)
+
 
 macro registerComponents*(id: static[EcsIdentity], options: static[ECSCompOptions], body: untyped): untyped =
   ## Registers the root type declarations in `body` as components for use in an ECS.
