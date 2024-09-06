@@ -131,9 +131,6 @@ proc buildConstructionCaseStmt(
     quote do:
       types.hasKey(`id`)
 
-  var
-    deferredEvents = newStmtList()
-
   # Populate case statement with state changes for each component.
   for c in id.building allComponents:
 
@@ -324,7 +321,7 @@ proc makeRuntimeConstruction*(id: EcsIdentity): NimNode =
   if not(edoConstruct in disabledOps):
     result.add(quote do:
       proc construct*(`construction`: ComponentList, `amountParam`: int, `context` = NO_ENTITY_REF): seq[EntityRef] {.discardable.}
-      proc construct*(`construction`: ConstructionTemplate): seq[EntityRef]
+      proc construct*(`construction`: ConstructionTemplate): seq[EntityRef] {.discardable.}
     )
 
   # Build
@@ -529,7 +526,7 @@ proc makeRuntimeConstruction*(id: EcsIdentity): NimNode =
 
     result.add(quote do:
 
-      proc construct*(`cList`: ComponentList, `context`: EntityRef = NO_ENTITY_REF): EntityRef =
+      proc construct*(`cList`: ComponentList, `context`: EntityRef = NO_ENTITY_REF): EntityRef {.discardable.} =
         ## Create a runtime entity from a list of components.
         ## 
         ## The user may use `registerCallback` to control construction of
@@ -576,7 +573,7 @@ proc makeRuntimeConstruction*(id: EcsIdentity): NimNode =
           result.add construct(`construction`, `context`)
 
 
-      proc construct*(`construction`: ConstructionTemplate): seq[EntityRef] =
+      proc construct*(`construction`: ConstructionTemplate): seq[EntityRef] {.discardable.} =
         ## Constructs multiple entities and returns their entity ids.
         ## 
         ## The first entity in the list is passed to the others as the `context`.
