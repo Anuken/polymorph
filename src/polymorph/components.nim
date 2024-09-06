@@ -177,7 +177,6 @@ proc doRegisterComponents(id: EcsIdentity, options: ECSCompOptions, body: NimNod
       refTypeAccessName = newIdentNode("refType")
       tyParam = newIdentNode("ty")
       refTypeNameIdent = newIdentNode(refTypeName(typeNameStr))
-      setTypeIdParam = newIdentNode "setTypeId"
     
     registered.add typeNameStr
 
