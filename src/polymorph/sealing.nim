@@ -1221,8 +1221,8 @@ proc makeListSystem(id: EcsIdentity): NimNode =
   result = quote do:
     proc listSystems*(`entIdent`: EntityRef): string =
       const
-        `sysDesyncMsg` = "[System]: entity contains the required components but is missing from the system index"
-        `entDesyncMsg` = "[Entity]: the system index references this entity but the entity doesn't have the required components"
+        `sysDesyncMsg` {.used.} = "[System]: entity contains the required components but is missing from the system index"
+        `entDesyncMsg` {.used.} = "[Entity]: the system index references this entity but the entity doesn't have the required components"
 
       if `entIdent`.alive:
         `innards`
