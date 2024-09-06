@@ -814,10 +814,6 @@ template defineSystem*(name: static[string], componentTypes: untyped): untyped =
   ## Define a system and its types using the default ECS identity with default system options.
   defaultIdentity.defineSystem(name, componentTypes)
 
-template defineSystem*(name: static[string]): untyped =
-  ## Define a system and its types using the default ECS identity with default system options.
-  defaultIdentity.defineSystem(name, nil)
-
 template defineSystemOwner*(name: static[string], componentTypes: untyped, ownedComponents: untyped, options: static[ECSSysOptions], extraFields: untyped): untyped =
   ## Define a system using the default ECS identity, declaring types that are owned by this system and providing extra fields.
   defaultIdentity.defineSystemOwner(name, componentTypes, ownedComponents, options, extraFields)
