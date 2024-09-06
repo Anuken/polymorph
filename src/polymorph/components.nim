@@ -1119,17 +1119,18 @@ proc genForAllComponents(id: EcsIdentity, typeId: ComponentTypeId, actions: NimN
     instType = newIdentNode instanceTypeName(n)
     accessArray = newIdentNode storageFieldName(n)
 
-  quote do:
-    template componentTypeId: untyped = `typeId`
-    template componentName: untyped = `n`
-    template componentInstType: untyped = `instType`
-    template componentType: untyped = `ty`
+  result = quote do:
+    block:
+      template componentTypeId: untyped = `typeId`
+      template componentName: untyped = `n`
+      template componentInstType: untyped = `instType`
+      template componentType: untyped = `ty`
 
-    for i in 0 ..< `accessArray`.len:
-      # Access each instance of the type in storage.
-      template index: untyped = i
-      template component: untyped = `accessArray`[i]
-      `actions`
+      for i in FIRST_COMPONENT_ID.int ..< `accessArray`.len:
+        # Access each instance of the type in storage.
+        template index: untyped = i
+        template component: untyped = `accessArray`[i]
+        `actions`
 
 
 macro forAllComponents*(id: static[EcsIdentity], typeId: static[ComponentTypeId], actions: untyped): untyped =
