@@ -373,6 +373,11 @@ template onClone*(typeToUse: typedesc, actions: untyped): untyped =
 macro onBindConstruct*(id: static[EcsIdentity], typeToUse: typedesc, actions: untyped): untyped =
   ## Add some code to be executed when `construct` has finished building
   ## multiple entities.
+  ## 
+  ## Injects the following templates:
+  ##   - `entity`: the current entity.
+  ##   - `component`: the component being constructed.
+  ## 
   ## Each invocation will append to the code that will be inserted.
   id.add_onEntityBinding(typeStringToId(id, $typeToUse), actions)
   newStmtList()
@@ -380,6 +385,9 @@ macro onBindConstruct*(id: static[EcsIdentity], typeToUse: typedesc, actions: un
 template onBindConstruct*(typeToUse: typedesc, actions: untyped): untyped =
   ## Add some code to be executed when `construct` has finished building
   ## multiple entities.
+  ## 
+  ## Use the `entities` template to refer to the entities being bound.
+  ## 
   ## Each invocation will append to the code that will be inserted.
   onBindConstruct(defaultIdentity, typeToUse, actions)
 

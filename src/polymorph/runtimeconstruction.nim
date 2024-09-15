@@ -531,13 +531,17 @@ proc makeRuntimeConstruction*(id: EcsIdentity): NimNode =
       proc construct*(`cList`: ComponentList, `context`: EntityRef = NO_ENTITY_REF): EntityRef {.discardable.} =
         ## Create a runtime entity from a list of components.
         ## 
-        ## The user may use `registerCallback` to control construction of
-        ## particular types.
-        ## 
         ## `context` contains the constructing entity when not passed.
         ## 
         ## When this called from a `ConstructionTemplate`, `context` will
         ## be the first entity to be constructed.
+        ## 
+        ## Use `MyType.onConstruct` to assign code that runs specifically
+        ## when a type has been constructed.
+        ## 
+        ## For dynamic setup, build with
+        ## `ECSEntityOptions.runtimeConstructionHooks = true` and use
+        ## `registerCallback` to control construction of particular types.
 
         static: startOperation(`id`, "construct")
         `res` = newEntity()
@@ -716,13 +720,19 @@ proc makeRuntimeConstruction*(id: EcsIdentity): NimNode =
       proc clone*(`cloneEntity`: EntityRef): EntityRef =
         ## Copy an entity's components to a new entity.
         ## 
-        ## Note that copying objects with pointers/references can have undesirable results.
+        ## Note that copying objects with pointers/references can have
+        ## undesirable results.
         ## 
-        ## For special setup, use `registerCloneConstructor` for the type. This gets passed
-        ## the clone type it would have added.
+        ## Use `MyType.onClone` to assign code that runs specifically
+        ## when a type has been cloned.
         ## 
-        ## You can then add a modified component or entirely different set
-        ## of components, or ignore it by not adding anything.
+        ## For dynamic setup, build with
+        ## `ECSEntityOptions.runtimeConstructionHooks = true` and use
+        ## `registerCloneConstructor` for the type.
+        ## This gets passed the clone type it would have added.
+        ## 
+        ## You can then add a modified component or entirely different
+        ## set of components, or ignore it by not adding anything.
 
         let `entity` = `cloneEntity`
         assert `entity`.alive, "Cloning a dead entity"
