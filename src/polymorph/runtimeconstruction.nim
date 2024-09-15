@@ -205,6 +205,7 @@ proc makeRuntimeConstruction*(id: EcsIdentity): NimNode =
     cList = ident "componentList"
     construction = ident "construction"
     cloneEntity = ident "entity"
+    cloneEntities = ident "entities"
     amountParam = ident "amount"
     ctAmountParam = ident "amount"
     context = ident "context"
@@ -317,6 +318,7 @@ proc makeRuntimeConstruction*(id: EcsIdentity): NimNode =
   if not(edoClone in disabledOps):
     result.add(quote do:
       proc clone*(`cloneEntity`: EntityRef): EntityRef
+      proc clone*(`cloneEntities`: Entities): Entities
     )
   if not(edoConstruct in disabledOps):
     result.add(quote do:
@@ -746,4 +748,11 @@ proc makeRuntimeConstruction*(id: EcsIdentity): NimNode =
         `cloneLoop`
         `cloneEvents`
         static: endOperation(`id`)
+
+      proc clone*(`cloneEntities`: Entities): Entities =
+        ## Clone a sequence of entities.
+        result = newSeqOfCap[EntityRef](entities.len)
+        for entity in entities:
+          result.add entity.clone
+
     )
