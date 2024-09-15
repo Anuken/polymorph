@@ -1002,6 +1002,7 @@ proc doFetchComponents(id: EcsIdentity, entity: NimNode, components: NimNode): N
   let
     suffix = resultSym.getSuffix
     passedTypes = toTypeList(id, components)
+    deAliasedEntity = genSym(nskLet, "givenEntity")
 
   for c in building(id, passedTypes):
     let
@@ -1013,15 +1014,20 @@ proc doFetchComponents(id: EcsIdentity, entity: NimNode, components: NimNode): N
   var
     fetchOp = newStmtList()
 
+  # Avoid duplicating the code for 'entity' if it's a template.
+  fetchOp.add(quote do:
+    let `deAliasedEntity` = `entity`
+  )
+
   when compileOption("assertions"):
     fetchOp.add(
       quote do:
         {.line.}:
-          assert `entity`.alive,
-            "Fetch component on a dead entity. Entity ID: " & $`entity`.entityId.int &
-            ", Instance: " & $`entity`.instance.int
+          assert `deAliasedEntity`.alive,
+            "Fetch component on a dead entity. Entity ID: " & $`deAliasedEntity`.entityId.int &
+            ", Instance: " & $`deAliasedEntity`.instance.int
     )
-  fetchOp.buildFetchComponents(id, entity, passedTypes, suffix, earlyExit = true, byFetchedIdent)
+  fetchOp.buildFetchComponents(id, deAliasedEntity, passedTypes, suffix, earlyExit = true, byFetchedIdent)
   fetchOp.add resultTuple
   
   result =
