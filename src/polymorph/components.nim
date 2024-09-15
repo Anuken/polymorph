@@ -1121,15 +1121,15 @@ proc genForAllComponents(id: EcsIdentity, typeId: ComponentTypeId, actions: NimN
 
   result = quote do:
     block:
-      template componentTypeId: untyped = `typeId`
-      template componentName: untyped = `n`
-      template componentInstType: untyped = `instType`
-      template componentType: untyped = `ty`
+      template componentTypeId: untyped {.used.} = `typeId`
+      template componentName: untyped {.used.} = `n`
+      template componentInstType: untyped {.used.} = `instType`
+      template componentType: untyped {.used.} = `ty`
 
       for i in FIRST_COMPONENT_ID.int ..< `accessArray`.len:
         # Access each instance of the type in storage.
-        template index: untyped = i
-        template component: untyped = `accessArray`[i]
+        template index: untyped {.used.} = i
+        template component: untyped {.used.} = `accessArray`[i]
         `actions`
 
 
@@ -1221,10 +1221,10 @@ proc doForAllComponentTypes(id: EcsIdentity, actions: NimNode): NimNode =
     result.add(
       quote do:
         block:
-          template componentTypeId: ComponentTypeId = `tyId`
-          template componentName: string = `tyStr`
-          template componentInstType: untyped = `tyInst`
-          template componentType: untyped = `ty`
+          template componentTypeId: ComponentTypeId {.used.} = `tyId`
+          template componentName: string {.used.} = `tyStr`
+          template componentInstType: untyped {.used.} = `tyInst`
+          template componentType: untyped {.used.} = `ty`
 
           `actions`
     )
