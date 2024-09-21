@@ -761,7 +761,7 @@ proc genTypeAccess*(id: EcsIdentity): NimNode =
     )
     if not id.private:
       typeAccess.add(quote do:
-        converter accessValue*(`instParam`: `instanceTypeIdent`): `typeNameIdent` =
+        converter accessValue*(`instParam`: `instanceTypeIdent`): var `typeNameIdent` =
           ## Implicitly convert a component instance to its native type
           ## using `access`.
           `instParam`.access
