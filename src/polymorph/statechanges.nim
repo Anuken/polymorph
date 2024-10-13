@@ -761,7 +761,9 @@ proc makeStateChanges*(id: EcsIdentity): NimNode =
     entity = ident "entity"
     identity = quote do: `id`
     res = ident "result"
+    component = ident "component"
     componentList = ident "componentList"
+    componentTypeClass = ident typeClassName()
 
   result = quote do:
     
@@ -788,10 +790,15 @@ proc makeStateChanges*(id: EcsIdentity): NimNode =
       ## the instances.
       doAddComponents(`identity`, `entity`, `componentList`)
 
-    macro add*(`entity`: EntityRef, `componentList`: varargs[typed]): untyped =
-      ## Add components to an entity and return a tuple containing
-      ## the instances.
-      doAddComponents(`identity`, `entity`, `componentList`)
+    proc add*[T: `componentTypeClass`](`entity`: EntityRef, `component`: T): auto {.discardable.} =
+      ## Add a single component to an entity and return the component
+      ## instance.
+      `entity`.addComponents(`component`)[0]
+
+    template add*(`entity`: EntityRef, `componentList`: varargs[untyped]): untyped =
+      ## Add multiple components to an entity and return a tuple of
+      ## the component instances.
+      `entity`.addComponents(`componentList`)
 
     macro removeComponents*(`entity`: EntityRef, `componentList`: varargs[typed]): untyped =
       ## Remove components from an entity.
@@ -811,11 +818,6 @@ proc makeStateChanges*(id: EcsIdentity): NimNode =
         assert c.typeId != InvalidComponent
         caseComponent c.typeId:
           removeComponent(entity, componentType())
-
-    # Generic state change utilities.
-
-    template add*(`entity`: EntityRef, component: ComponentTypeclass) =
-      `entity`.addComponent component
 
 
   if id.private:
@@ -906,8 +908,7 @@ proc makeStateChanges*(id: EcsIdentity): NimNode =
         proc addOrUpdate*[T: ComponentTypeclass](`entity`: EntityRef, component: T): auto {.discardable.} =
           ## Add `component` to `entity`, or if `component` already exists, overwrite it.
           ## Returns the component instance.
-          let
-            fetched = `entity`.fetchComponent typedesc[T]
+          let fetched = `entity`.fetchComponent T
           
           if fetched.valid:
             # Replace original. No further work is required as the types or indexes have not been updated.
@@ -932,7 +933,7 @@ proc makeStateChanges*(id: EcsIdentity): NimNode =
           ## This is useful when you always want a valid component
           ## instance returned, but don't want to overwrite existing
           ## data.
-          `res` = `entity`.fetchComponent typedesc[T]
+          `res` = `entity`.fetchComponent T
           if not `res`.valid:
             `res` = addComponents(`entity`, default(component))[0]
     )
