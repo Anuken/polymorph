@@ -1068,8 +1068,8 @@ proc makeFetchComponents*(id: EcsIdentity): NimNode =
       ##   echo results.comp2
       doFetchComponents(`ecsId`, `entity`, components)
 
-    template fetch*(`entity`: EntityRef, components: varargs[typed]): untyped =
-      fetchComponents(`entity`, components)
+    #template fetch*(`entity`: EntityRef, components: varargs[typed]): untyped =
+    #  fetchComponents(`entity`, components)
 
     template fetchComponent*(`entity`: EntityRef, t: typedesc): auto =
       ## Looks up and returns the instance of the component, which allows direct field access.
