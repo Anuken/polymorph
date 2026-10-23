@@ -18,6 +18,7 @@
 import macros, sharedtypes, private/[utils, ecsstatedb, eventutils]
 import components, entities, statechanges, runtimeconstruction
 import tables, strutils, stats, sets
+from private/statechangegen import makeSystemStateProcs
 
 
 export
@@ -1553,8 +1554,15 @@ proc sealStateChanges(id: EcsIdentity): NimNode =
       `delProcName`(`deleteEntParam`)
   )
 
+  # Shared per-system procs used by state changes. These are generated first so
+  # state changes know they're available, and implemented after all state
+  # change operations so events can use them.
+  let sysProcs = makeSystemStateProcs(id)
+  result.add sysProcs.forwardDecls
+
   result.add makeStateChanges(id)
   result.add makeDelete(id)
+  result.add sysProcs.procs
 
 
 proc sealRuntimeDebugging(id: EcsIdentity): NimNode =

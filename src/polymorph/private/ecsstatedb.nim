@@ -135,7 +135,7 @@ else:
     "logInitialised"  # Perform one log clear per unique path.
     ])
 
-  
+
   genGlobalStates(NimNode, [
     "uncommittedSystems", # Use the NimNode as a seq[int] as a mutable seq[SystemIndex].
     "disabledOperations",
@@ -205,7 +205,7 @@ else:
       "ecsCommitImportFrom",
     ]
   )
-  
+
   # Generate 'id.fieldName' and 'id.set_fieldName value' for entity options.
   genObjAccessor(entityOptions, EcsEntityOptions)
 
@@ -223,25 +223,37 @@ proc typeName*(id: EcsIdentity, compId: ComponentTypeId): string =
   id.checkId compId
   id.components[compId.int].strVal
 
+proc findNameIndex(key: CacheSeq, name: string): int {.compileTime.} =
+  ## Returns the first index in `key` whose string value matches `name`
+  ## case insensitively, or -1.
+  ## Uses a lookup table that is lazily updated with entries added to `key`,
+  ## as linear scans here are a significant part of compile times for large projects.
+  let
+    lookup = CacheTable(key.string & "NameLookup")
+    indexed = CacheCounter(key.string & "NameLookupLen")
+
+  for i in indexed.value ..< key.len:
+    let entryName = key[i].strVal.toUpperAscii
+    if entryName notin lookup:
+      lookup[entryName] = newLit(i)
+  indexed.inc(key.len - indexed.value)
+
+  let upperName = name.toUpperAscii
+  if upperName in lookup: lookup[upperName].intVal.int
+  else: -1
+
 proc findCompId*(id: EcsIdentity, typeName: string): ComponentTypeId {.compileTime.} =
   ## Find the ComponentTypeId from a type name.
   ## Note: assumes ascii type identifiers.
-  let fTypeName = toUpperAscii(typeName)
-  let key = id.components
-
-  var i: int
-  for ty in key:
-    if ty.strVal.toUpperAscii == fTypeName:
-      return ComponentTypeId(i)
-    i += 1
-  
-  InvalidComponent
+  let index = findNameIndex(id.components, typeName)
+  if index >= 0: ComponentTypeId(index)
+  else: InvalidComponent
 
 proc addTypeId*(id: EcsIdentity, typeName: string): ComponentTypeId {.compileTime, discardable.} =
   ## Add a new component type and return its ComponentTypeId.
   ## Type must not already be registered.
   # This is defined below the db setup so we can use access procs here.
-  
+
   if id.findCompId(typeName) != InvalidComponent:
     error "Component type \"" & typeName & "\" is already registered"
 
@@ -291,17 +303,9 @@ proc getSystemName*(id: EcsIdentity, sysIdx: SystemIndex): string {.compileTime.
 
 proc findSysIdx*(id: EcsIdentity, name: string): SystemIndex {.compileTime.} =
   ## Find a SystemIndex matching `name`.
-  let
-    key = id.systemsKey
-    sysName = name.toUpperAscii
-
-  var i: int
-  for item in key:
-    if item.strVal.toUpperAscii == sysName:
-      return i.SystemIndex
-    i += 1
-
-  InvalidSystemIndex
+  let index = findNameIndex(id.systemsKey, name)
+  if index >= 0: index.SystemIndex
+  else: InvalidSystemIndex
 
 proc addSystem*(id: EcsIdentity, name: string): SystemIndex {.discardable, compileTime.} =
   ## Create a new system.

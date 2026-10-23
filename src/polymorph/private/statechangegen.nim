@@ -39,7 +39,7 @@
 ## `addComponents`, `construct`, and so on.
 
 
-import macros, strutils, sets, tables
+import macros, macrocache, strutils, sets, tables
 import ../sharedtypes, ecsstatedb
 import utils, eventutils, statechangeutils, mutationtracking
 
@@ -59,6 +59,11 @@ type
     update*: NimNode
     events*: NimNode
     deferredEvents*: NimNode  # System events triggered by negation to be run after system state changes.
+    # Calls to shared per-system procs (see `makeSystemStateProcs`).
+    # These perform their own system fetch, so don't need `sysFetches`.
+    procUpdate*: NimNode
+    procEvents*: NimNode
+    procDeferredEvents*: NimNode
   
   # The update groups and event groups must be executed in the order
   # they're provided so that the user can rely on predictable state
@@ -113,8 +118,160 @@ proc newSystemUpdate*(): SystemUpdate =
   SystemUpdate(
     update: newStmtList(),
     events: newStmtList(),
-    deferredEvents: newStmtList()
+    deferredEvents: newStmtList(),
+    procUpdate: newStmtList(),
+    procEvents: newStmtList(),
+    procDeferredEvents: newStmtList()
   )
+
+
+# -------------------------
+# Shared per-system procs
+# -------------------------
+
+# Removing an entity from a system, and the events for entities being added to
+# or removed from a system, don't depend on the state change that causes them.
+# Instead of generating this code at every state change for every system
+# affected, it's generated once per system in `makeSystemStateProcs` and
+# state changes call these procs.
+#
+# State changes within events still generate their code inline, as these
+# perform extra compile time checks that depend on the event environment.
+
+const sysProcSuffix = "SysProc"
+
+proc sysProcsTable(id: EcsIdentity): CacheTable {.compileTime.} =
+  CacheTable(id.string & "SysStateProcs")
+
+proc getSysProc(id: EcsIdentity, kind: string, sys: SystemIndex): NimNode =
+  ## Returns the ident of a shared proc for `sys`, or nil if it's not available.
+  if id.ecsEventEnv.len > 0:
+    return nil
+  let key = kind & $sys.int
+  if key in id.sysProcsTable: id.sysProcsTable[key]
+  else: nil
+
+proc buildAddSystemEvents(id: EcsIdentity, entity: NimNode, sys: SystemBuildInfo, sysRow: NimNode): tuple[events: NimNode, used: bool] =
+  ## Builds the events for `entity` being added to `sys`.
+  var
+    events = newStmtList()
+    context = id.newEventContext(entity, sys, sysRow)
+
+  for c in id.building(id.ecsSysRequirements sys.index):
+    let
+      sysVar = sys.variable
+      fieldIdent = ident c.lcName
+      inst = quote do:
+        `sysVar`.groups[`sysRow`].`fieldIdent`
+    
+    context.component = (c, inst)
+
+    events.invokeEvent(id, context, ekCompAddTo)
+    events.invokeEvent(id, context, ekSystemAddAny)
+
+  # System events.
+
+  events.invokeEvent(id, context, ekRowAdded)
+  events.invokeEvent(id, context, ekRowAddedCb)
+
+  (events, context.used)
+
+proc buildRemoveSystemEvents(id: EcsIdentity, entity: NimNode, sys: SystemBuildInfo, sysRow: NimNode): tuple[events: NimNode, used: bool] =
+  ## Builds the events for `entity` being removed from `sys`.
+  let
+    sysVar = sys.variable
+  var
+    context = newEventContext(id, entity, sys, sysRow)
+    sysEvents = newStmtList()
+
+  for c in id.building(id.ecsSysRequirements sys.index):
+    let
+      fieldIdent = ident c.lcName
+      inst =
+        quote do:
+          `sysVar`.groups[`sysRow`].`fieldIdent`
+
+    context.component = (c, inst)
+
+    sysEvents.invokeEvent(id, context, ekCompRemoveFrom)
+    sysEvents.invokeEvent(id, context, ekSystemRemoveAny)
+
+  sysEvents.invokeEvent(id, context, ekRowRemoved)
+  sysEvents.invokeEvent(id, context, ekRowRemovedCb)
+
+  (sysEvents, context.used)
+
+proc makeSystemStateProcs*(id: EcsIdentity): tuple[forwardDecls, procs: NimNode] =
+  ## Generates shared procs for removing an entity from each system and for
+  ## system add/remove events.
+  ## The forward declarations must be placed before any state changes, and the
+  ## procs after state change operations are defined so that events can use them.
+  result = (newStmtList(), newStmtList())
+
+  let
+    entity = ident "entity"
+    entId = newDotExpr(entity, ident "entityId")
+    table = id.sysProcsTable
+
+  proc addProc(res: var tuple[forwardDecls, procs: NimNode], name, body: NimNode) =
+    res.forwardDecls.add(quote do:
+      proc `name`(`entity`: EntityRef)
+    )
+    res.procs.add(quote do:
+      proc `name`(`entity`: EntityRef) =
+        `body`
+    )
+
+  for sys in id.building(id.allUnsealedSystems):
+    let
+      sysName = sys.name.capitalizeAscii
+      sysFetch = sys.fetchedIdent sysProcSuffix
+      row = sysFetch.newDotExpr ident"row"
+    var
+      fetch = newStmtList()
+    fetch.buildFetchSystems(id, entity, @[sys.index], sysProcSuffix)
+
+    # Remove the entity's row.
+    block:
+      let
+        name = ident("ecsRemoveRow" & sysName)
+        unregister = id.unregister(sys.index, sys.variable, row, entId)
+        body = quote do:
+          `fetch`
+          if `sysFetch`.found:
+            `unregister`
+      result.addProc(name, body)
+      table["removeRow" & $sys.index.int] = name
+
+    # Events for when the entity is removed.
+    block:
+      var (events, used) = id.buildRemoveSystemEvents(entity, sys, row)
+      if used:
+        events.trackMutation(id, ekEntityRemove, id.ecsSysRequirements(sys.index), announce = false)
+        let
+          name = ident("ecsRemoveEvents" & sysName)
+          fetchCopy = fetch.copy
+          body = quote do:
+            `fetchCopy`
+            if `sysFetch`.found:
+              `events`
+        result.addProc(name, body)
+        table["removeEvents" & $sys.index.int] = name
+
+    # Events for when the entity is added.
+    block:
+      var (events, used) = id.buildAddSystemEvents(entity, sys, row)
+      if used:
+        events.trackMutation(id, ekEntityAdd, id.ecsSysRequirements(sys.index), announce = false)
+        let
+          name = ident("ecsAddEvents" & sysName)
+          fetchCopy = fetch.copy
+          body = quote do:
+            `fetchCopy`
+            if `sysFetch`.found:
+              `events`
+        result.addProc(name, body)
+        table["addEvents" & $sys.index.int] = name
 
 
 proc initCode*(scd: var StateChangeDetails) =
@@ -427,33 +584,25 @@ proc addToSystem(id: EcsIdentity, entity: NimNode, details: var StateChangeDetai
 
     let
       sysRow = sys.fetchedIdent(details.suffix).newDotExpr(ident "row")
+      eventsProc = id.getSysProc("addEvents", sys.index)
     var
-      events = newStmtList()
-      context = id.newEventContext(entity, sys, sysRow)
       addSystemGroup = details.systemGroups.mgetOrPut(
         sys.index,
         newSystemUpdate()
       )
 
-    for c in id.building(orderedReq):
+    if not eventsProc.isNil:
+      let call = newCall(eventsProc, entity)
+      if change.fromNegation:
+        addSystemGroup.procDeferredEvents.add call
+      else:
+        addSystemGroup.procEvents.add call
 
-      let
-        sysVar = sys.variable
-        fieldIdent = ident c.lcName
-        inst = quote do:
-          `sysVar`.groups[`sysRow`].`fieldIdent`
-      
-      context.component = (c, inst)
-
-      events.invokeEvent(id, context, ekCompAddTo)
-      events.invokeEvent(id, context, ekSystemAddAny)
-
-    # System events.
-
-    events.invokeEvent(id, context, ekRowAdded)
-    events.invokeEvent(id, context, ekRowAddedCb)
+    let (events, used) =
+      if eventsProc.isNil: id.buildAddSystemEvents(entity, sys, sysRow)
+      else: (newStmtList(), false)
     
-    if context.used:
+    if used:
       addSystemGroup.sysFetches.incl sys.index
       
       if change.fromNegation:
@@ -514,7 +663,6 @@ proc removeFromSystem(id: EcsIdentity, entity: NimNode, details: var StateChange
       newSystemUpdate()
     )
   
-  removeSystemRow.sysFetches.incl sys.index
   if sys.isOwner:
     # Removing a row from an owner system removes all of that system's
     # owned components from the entity.
@@ -526,48 +674,38 @@ proc removeFromSystem(id: EcsIdentity, entity: NimNode, details: var StateChange
     sysFetch = sys.fetchedIdent details.suffix
     row = sysFetch.newDotExpr ident"row"
     sysInt = sys.index.int
+    removeRowProc = id.getSysProc("removeRow", sys.index)
+    eventsProc = id.getSysProc("removeEvents", sys.index)
 
-  removeSystemRow.update.add id.unregister(sys.index, sys.variable, row, entId)
+  if removeRowProc.isNil:
+    removeSystemRow.sysFetches.incl sys.index
+    removeSystemRow.update.add id.unregister(sys.index, sys.variable, row, entId)
+  else:
+    removeSystemRow.procUpdate.add newCall(removeRowProc, entity)
   
   # Record this mutation in the output code.
   if not defined(ecsPermissive):
-    removeSystemRow.update.add(quote do:
+    let recordMut = quote do:
       static:
         recordMutation(`id`, ekRowRemoved, [`sysInt`])
-    )
+    if removeRowProc.isNil: removeSystemRow.update.add recordMut
+    else: removeSystemRow.procUpdate.add recordMut
 
   # Events
 
-  let
-    sysRow = sysFetch.newDotExpr ident"row"
-    sysVar = sys.variable
-    orderedReq = id.ecsSysRequirements sys.index
-  var
-    context = newEventContext(id, entity, sys, sysRow)
-    sysEvents = newStmtList()
-
-  for c in id.building(orderedReq):
+  for c in id.building(id.ecsSysRequirements sys.index):
     # Extend to remove dependent owned components.
     for depComp in id.dependentComps(c.typeId):
       if depComp notin details.passedSet:
         details.compFetches.incl depComp  # For events.
 
-    let
-      fieldIdent = ident c.lcName
-      inst =
-        quote do:
-          `sysVar`.groups[`sysRow`].`fieldIdent`
-
-    context.component = (c, inst)
-
-    sysEvents.invokeEvent(id, context, ekCompRemoveFrom)
-    sysEvents.invokeEvent(id, context, ekSystemRemoveAny)
-
-  sysEvents.invokeEvent(id, context, ekRowRemoved)
-  sysEvents.invokeEvent(id, context, ekRowRemovedCb)
-
-  if context.used:
-    removeSystemRow.events.add sysEvents
+  if not eventsProc.isNil:
+    removeSystemRow.procEvents.add newCall(eventsProc, entity)
+  else:
+    let (sysEvents, used) = id.buildRemoveSystemEvents(entity, sys, row)
+    if used:
+      removeSystemRow.sysFetches.incl sys.index
+      removeSystemRow.events.add sysEvents
 
 
 proc applyChange*(id: EcsIdentity, entity: NimNode, details: var StateChangeDetails, change: SystemChange) =
@@ -658,6 +796,14 @@ proc buildSystemUpdates(id: EcsIdentity, entity: NimNode, details: var StateChan
       nil,
       details
     )
+
+    # Calls to shared procs, which check the system themselves.
+    if sysUpdate.procUpdate.len > 0:
+      details.systemUpdates.add details.gateSystemActions(info, sysUpdate.procUpdate)
+    if sysUpdate.procEvents.len > 0:
+      details.allEvents.add details.gateSystemActions(info, sysUpdate.procEvents)
+    if sysUpdate.procDeferredEvents.len > 0:
+      details.deferredEvents.add details.gateSystemActions(info, sysUpdate.procDeferredEvents)
 
 
 proc buildStateChange*(id: EcsIdentity, entity: NimNode, details: var StateChangeDetails) =

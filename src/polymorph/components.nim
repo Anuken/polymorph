@@ -759,7 +759,11 @@ proc genTypeAccess*(id: EcsIdentity): NimNode =
         let i = inst  # Prevents duplicate instantiation of `inst`.
         (i.typeId, i.ComponentIndex, i.generation)
     )
-    if not id.private:
+    # Every converter in scope is tried on every failed argument match during
+    # overload resolution, so one converter per component type is very
+    # expensive for compile times in large projects. `-d:ecsNoConverters`
+    # skips generating them; use `access` for explicit conversion instead.
+    if not id.private and not defined(ecsNoConverters):
       typeAccess.add(quote do:
         converter accessValue*(`instParam`: `instanceTypeIdent`): var `typeNameIdent` =
           ## Implicitly convert a component instance to its native type

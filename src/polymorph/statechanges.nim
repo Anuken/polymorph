@@ -1159,6 +1159,56 @@ proc makeDelete*(id: EcsIdentity): NimNode =
       var `sysProcessed`: set[`sysEnum`]
   )
 
+  # The code to remove the entity from a system is generated once per system as
+  # procs nested within `doDelete`, rather than being inlined into the case branch
+  # of every component the system uses. This greatly reduces the amount of code
+  # generated (and compile times) for large ECSs.
+  var
+    sysProcs = newStmtList()
+    sysUpdateProcs: Table[SystemIndex, NimNode]
+    sysEventProcs: Table[SystemIndex, NimNode]
+
+  for c in id.building allComponents:
+    for sys in id.linked(c.typeId):
+      if sys in sysUpdateProcs:
+        continue
+
+      var sysDetails = newStateChangeDetails(scdkDelete)
+      sysDetails.suffix = suffix
+      id.applyChange(entitySym, sysDetails, SystemChange(kind: sckRemove, sys: sys))
+      id.buildStateChange entitySym, sysDetails
+
+      let
+        sysName = id.getSystemName(sys)
+        updateProc = ident("removeFromSys" & sysName.capitalizeAscii)
+        updateBody = sysDetails.systemUpdates
+
+      sysProcs.add(quote do:
+        proc `updateProc`(`entitySym`: EntityRef) =
+          `updateBody`
+      )
+      sysUpdateProcs[sys] = updateProc
+
+      if sysDetails.deferredEvents.len > 0 or sysDetails.allEvents.len > 0:
+        let
+          eventProc = ident("removeFromSysEvents" & sysName.capitalizeAscii)
+          allEvents = sysDetails.allEvents
+          defEvents = sysDetails.deferredEvents
+
+        sysProcs.add(quote do:
+          proc `eventProc`(`entitySym`: EntityRef) =
+            `allEvents`
+            `defEvents`
+        )
+        sysEventProcs[sys] = eventProc
+
+  proc gateSysCall(sys: SystemIndex, procIdent: NimNode): NimNode =
+    let thisSystem = ident sysEnum(id.getSystemName(sys))
+    quote do:
+      if `thisSystem` notin `sysProcessed`:
+        `sysProcessed`.incl `thisSystem`
+        `procIdent`(`entitySym`)
+
   for c in id.building allComponents:
     # Populate case statements for events and each component.
 
@@ -1172,12 +1222,14 @@ proc makeDelete*(id: EcsIdentity): NimNode =
     details.iterating = quote do:
       `instTy`(`curComp`.index)
 
-    # Calculate the effect of removing this component.
-    for sys in id.linked(c.typeId):
-      id.applyChange(entitySym, details, SystemChange(kind: sckRemove, sys: sys))
-
-    # Generate code to remove the component.
+    # Generate code to remove the component, without system changes.
     id.buildStateChange entitySym, details
+
+    # Calculate the effect of removing this component on systems.
+    for sys in id.linked(c.typeId):
+      details.systemUpdates.add gateSysCall(sys, sysUpdateProcs[sys])
+      if sys in sysEventProcs:
+        details.allEvents.add gateSysCall(sys, sysEventProcs[sys])
 
     if details.deferredEvents.len > 0 or details.allEvents.len > 0:
       let
@@ -1262,6 +1314,7 @@ proc makeDelete*(id: EcsIdentity): NimNode =
       if not `entitySym`.alive or not(entityData(`entIdIdent`).setup):
         return
       
+      `sysProcs`
       `userStateChangeEvent`
       `deleteCore`
 
