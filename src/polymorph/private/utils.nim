@@ -1,13 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # Copyright (c) 2020 Ryan Lipscombe
-# 
+#
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
-# 
+#
 #     http://www.apache.org/licenses/LICENSE-2.0
-# 
+#
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -16,11 +16,11 @@
 
 ## This module covers shared internal tools and utilities used to build
 ## the ECS code.
-## 
+##
 ## *This module is not exported to the user*.
-## 
+##
 ## Functionality:
-## 
+##
 ## - Procs used to generate consistent field and type names.
 ## - Structural generation through various levels of abstraction.
 ## - Building user event calls.
@@ -558,13 +558,13 @@ proc addToEntityList*(id: EcsIdentity, entity: NimNode, passed: ComponentIterabl
     )
 
 
-proc removeComponentRef(entityId, index: NimNode, typeId: ComponentTypeId, componentStorageFormat: ECSCompStorage): NimNode = 
+proc removeComponentRef(entityId, index: NimNode, typeId: ComponentTypeId, componentStorageFormat: ECSCompStorage): NimNode =
   ## Removes a component from entity storage.
-  ## 
+  ##
   ## - Doesn't free the component slot,
   ## - Doesn't touch systems,
   ## - Doesn't update the intset for hasComponent.
-  ## 
+  ##
   ## Note: 'index' isn't used for the csTable format.
 
   result =
@@ -765,7 +765,7 @@ iterator systemTypesStr*(id: EcsIdentity, systemIndex: SystemIndex): string =
 proc strictCatchCheck(node: NimNode, id: EcsIdentity, sysIndex: SystemIndex) =
   ## Compile time check for using `item` "after" a delete or remove
   ## that affects the system.
-  ## 
+  ##
   ## Note that this doesn't handle conditional delete/removes.
 
   let
@@ -889,7 +889,7 @@ proc indexDel*(sysNode, entIdNode: NimNode, idxFmt: ECSSysIndexFormat): NimNode 
 proc indexTryGet*(sysNode, entIdNode, rowNode: NimNode, idxFmt: ECSSysIndexFormat): NimNode =
   ## Returns a search for an `EntityId` in a system index, placing the
   ## result in `rowNode`.
-  ## 
+  ##
   ## The resultant expression returns `true` when the index has the
   ## entity, and `false` if not.
   case idxFmt
@@ -972,7 +972,7 @@ proc removeOwnedComponentState*(id: EcsIdentity, typeId: ComponentTypeId, row: N
 
 proc assignSysItemGetRow*(id: EcsIdentity, sys: SystemBuildInfo, value, row: NimNode, storageFormat: ECSSysStorage): NimNode =
   ## Extend system groups depending on options.
-  ## 
+  ##
   ## Sets `row` to the index of insertion.
   ## Note: `row` must be previously defined.
 
@@ -1026,7 +1026,7 @@ proc unregister*(id: EcsIdentity, systemIndex: SystemIndex, sys, rowIdent, entId
     maxEntId = entityIdUpperBound(entOpts.entityStorageFormat)      # The code to return the highest EntityId.
 
   let
-    trimGroup = 
+    trimGroup =
       case systemStorageFormat
       of ssSeq:
         if maintainOrder:
@@ -1148,13 +1148,18 @@ proc commaSeparate*(id: EcsIdentity, list: ComponentIterable or SystemIterable):
 
 iterator typeDefs*(body: NimNode): (int, NimNode) =
   ## Return the nnkTypeDef and nnkIdent nodes in a body.
+  # A single `yield` stops the compiler from duplicating the loop body of the caller, which is faster to compile and avoids a Nim 2.2+ bug that breaks `quote` of type symbols in duplicated loop bodies.
+  var defs: seq[NimNode]
   for i, item in body:
+    defs.setLen 0
     if item.kind == nnkIdent:
-      yield (i, item)
+      defs.add item
     if item.kind == nnkTypeSection:
       for def in item:
         if def.kind == nnkTypeDef:
-          yield (i, def)
+          defs.add def
+    for def in defs:
+      yield (i, def)
 
 proc getTypeStr(compNode: NimNode): string =
   ## Extract the type of a symbol.
@@ -1504,24 +1509,24 @@ proc fill*[T](val: var T, node: NimNode) =
 proc calcDependentOwners*(id: EcsIdentity, typeId: ComponentTypeId): seq[SystemIndex] =
   ## Returns owner systems that have dependent owned components
   ## in a chain from this component.
-  ## 
+  ##
   ## The returned systems require this component to instantiate
   ## a row, either directly or indirectly, through one or more
   ## other components.
-  ## 
+  ##
   ## For example, consider the following dependent systems:
   ##   sys1 A, B        Owns: [A, B]
   ##   sys2 A, B, C, D  Owns: [C, D]
   ##   sys3 C, D, E, F  Owns: [E, F]
   ##   sys4 E, F, G, H  Owns: [G, H]
-  ## 
+  ##
   ## In order for any of sys1..sys4 to exist, all the components
   ## A, B, C, D, E, F, G, and H must be added in one operation.
   ## Likewise, removal of any of these components individually will
   ## invalidate the chain of ownership for sys1..sys4, and therefore
   ## causes all of them to be removed. These components only exist
   ## in relation to each other.
-  ## 
+  ##
   ## This is not true for non-owned components as they have independent
   ## existence outside of a system, and can be attached to an entity
   ## even if no system uses them.
