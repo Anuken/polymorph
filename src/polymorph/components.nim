@@ -69,6 +69,40 @@ proc findTypeId*(compRefs: ComponentList, typeId: ComponentTypeId): int =
 proc typeId*[T: Component](c: T): ComponentTypeId = c.fTypeId
 
 
+template `==`*[T](i1, i2: ComponentInstance[T]): bool = i1.int == i2.int
+
+# The dot operators forward to the `ecsFieldRead` and `ecsFieldWrite`
+# templates generated for each component type. They're defined once here
+# since dot operators are checked for every failed field access, such as
+# `x.someProc` calls.
+{.push experimental: "dotOperators".}
+template `.`*[T](instance: ComponentInstance[T], field: untyped): untyped =
+  ecsFieldRead(instance, field)
+
+template `.=`*[T](instance: ComponentInstance[T], field: untyped, value: untyped): untyped =
+  ecsFieldWrite(instance, field, value)
+{.pop.}
+
+# `add` is defined once here rather than for each component type, since
+# every overload of `add` is checked for each call to `add` in user code.
+
+template add*[T: object](items: var ComponentList, component: T) =
+  ## Add a component to a component list, automatically handling
+  ## `typeId`.
+  when not compiles(makeContainer(component)):
+    {.error: "Cannot add " & $T & " to a ComponentList as it is not a registered component type".}
+  system.add items, makeContainer(component)
+  assert items[^1].typeId != InvalidComponent,
+    "Internal error, could not resolve type id for " & $T
+
+template add*(items: var ComponentList, component: Component) =
+  ## Add a component to a component list, checking `typeId` is set up.
+  let c = component
+  assert c.typeId != InvalidComponent,
+    "Error type id is not set for " & $c.type & ". Use 'makeContainer' or add the source type instead"
+  system.add items, c
+
+
 func init*[T: Component](c: var T) {.inline.} =
   ## Useful when storing in containers, eg; seq[Component]
   c.fTypeId = c.type.typeId()
@@ -188,9 +222,13 @@ proc doRegisterComponents(id: EcsIdentity, options: ECSCompOptions, body: NimNod
 
     afterComponentDef.add typeNameStr.createRefComponent
 
+    # The instance type uses an empty tag type rather than the component type
+    # itself so that components can contain instances of other components.
+    let instTagNode = newIdentNode(instanceTypeName(typeNameStr) & "Tag")
     typeDeclarations.add(quote do:
       type
-        `instTypeNode`* = distinct `IdBaseType`
+        `instTagNode`* = object
+        `instTypeNode`* = ComponentInstance[`instTagNode`]
         `generationTypeNode`* = distinct `IdBaseType`
     )
 
@@ -201,19 +239,6 @@ proc doRegisterComponents(id: EcsIdentity, options: ECSCompOptions, body: NimNod
       func `typeIdAccessName`*(`tyParam`: `typeNameIdent` | `refTypeNameIdent` | `instTypeNode` | typedesc[`typeNameIdent`] | typedesc[`refTypeNameIdent`] | typedesc[`instTypeNode`]): ComponentTypeId =
         `typeId`
       
-      template `refTypeAccessName`*(`tyParam`: typedesc[`typeNameIdent`] | typedesc[`instTypeNode`]): typedesc = `refTypeNameIdent`
-
-      template containerType*(`tyParam`: typedesc[`typeNameIdent`]): untyped =
-        ## Compile-time translation between a user's type to its container
-        ## `ref` type for adding to a constructable `ComponentList`.
-        `refTypeNameIdent`
-      
-      template containerType*(`tyParam`: typedesc[`instTypeNode`]): untyped =
-        ## Compile-time translation between the instance type of a component
-        ## to its container `ref` type for adding to a constructable
-        ## `ComponentList`.
-        `refTypeNameIdent`
-
       func makeContainer*(`tyParam`: `typeNameIdent`): `refTypeNameIdent` =
         ## Create a `ref` container object from a user object for adding
         ## to a constructable `ComponentList`.
@@ -222,21 +247,28 @@ proc doRegisterComponents(id: EcsIdentity, options: ECSCompOptions, body: NimNod
       template makeContainer*(`tyParam`: `instTypeNode`): `refTypeNameIdent` =
         ## Create a `ref` container from an instance.
         `tyParam`.access.makeContainer()
-
-      proc add*(items: var ComponentList, component: `typeNameIdent`) =
-        ## Add a component to a component list, automatically handling
-        ## `typeId`.
-        system.add items, component.makeContainer()
-        assert items[^1].typeId != InvalidComponent,
-          "Internal error, could not resolve type id for " & $component.type
-
-      template add*(items: var ComponentList, component: `refTypeNameIdent`) =
-        ## Add a component to a component list, checking `typeId` is set up.
-        assert items[^1].typeId != InvalidComponent,
-          "Error type id is not set for " & $component.type & ". Use 'makeContainer' or add the source type instead"
-        system.add items, component
-
     )
+
+    # Rarely used type utilities. Each of these is another overload per
+    # component type that's checked for every call using that name, so
+    # `-d:ecsNoExtraTemplates` skips generating them, along with
+    # `accessType`, `componentStorage`, `ownerSystemIndex`, `delInstance`
+    # and `ownedComponents`.
+    if not defined(ecsNoExtraTemplates):
+      afterComponentDef.add(quote do:
+        template `refTypeAccessName`*(`tyParam`: typedesc[`typeNameIdent`] | typedesc[`instTypeNode`]): typedesc = `refTypeNameIdent`
+
+        template containerType*(`tyParam`: typedesc[`typeNameIdent`]): untyped =
+          ## Compile-time translation between a user's type to its container
+          ## `ref` type for adding to a constructable `ComponentList`.
+          `refTypeNameIdent`
+
+        template containerType*(`tyParam`: typedesc[`instTypeNode`]): untyped =
+          ## Compile-time translation between the instance type of a component
+          ## to its container `ref` type for adding to a constructable
+          ## `ComponentList`.
+          `refTypeNameIdent`
+      )
 
   if id.components.len == previousComponentsDeclared:
     error "Cannot process registerComponents: No typeDefs can be found to create components from"
@@ -415,8 +447,6 @@ proc genTypeAccess*(id: EcsIdentity): NimNode =
     )
 
     let
-      eqOp = nnkAccQuoted.newTree(newIdentNode "==")
-
       valueParam = ident "value"
       inst = ident "instance"
       fieldParam = ident "field"
@@ -431,15 +461,13 @@ proc genTypeAccess*(id: EcsIdentity): NimNode =
           newStmtList()
       sysOwner = c.owner
 
-    typeAccess.add(quote do:
-      template accessType*(`tyParam`: `instanceTypeIdent` | typedesc[`instanceTypeIdent`] | `typeNameIdent` | typedesc[`typeNameIdent`]): untyped =
-        ## Returns the source component type of a component instance.
-        ## This can also be achieved with `instance.access.type`.
-        typedesc[`typeNameIdent`]
-
-      template `eqOp`*(i1, i2: `instanceTypeIdent`): bool = i1.int == i2.int
-
-    )
+    if not defined(ecsNoExtraTemplates):
+      typeAccess.add(quote do:
+        template accessType*(`tyParam`: `instanceTypeIdent` | typedesc[`instanceTypeIdent`] | `typeNameIdent` | typedesc[`typeNameIdent`]): untyped =
+          ## Returns the source component type of a component instance.
+          ## This can also be achieved with `instance.access.type`.
+          typedesc[`typeNameIdent`]
+      )
 
     if c.isOwned:
       # This component is owned by a system, so access templates need to
@@ -467,11 +495,10 @@ proc genTypeAccess*(id: EcsIdentity): NimNode =
       # Dot overload to access the fields of the component in the owner system via the index.
       case options.accessMethod
       of amDotOp:
-        # We only need two dot operators, one for reading and one for writing to cover all the fields in this instance.
-        {.push experimental: "dotOperators".}
+        # Field access for this instance type, used by the `.` and `.=` operators for `ComponentInstance`.
         let
-          dotOp = nnkAccQuoted.newTree(newIdentNode ".")
-          dotEqOp = nnkAccQuoted.newTree(newIdentNode ".=")
+          dotOp = ident "ecsFieldRead"
+          dotEqOp = ident "ecsFieldWrite"
 
         typeAccess.add(quote do:
           template `dotOp`*(`inst`: `instanceTypeIdent`, `fieldParam`: untyped): untyped =
@@ -489,7 +516,6 @@ proc genTypeAccess*(id: EcsIdentity): NimNode =
             else:
               {.fatal: `invalidFieldPrefix` & astToStr(`fieldParam`) & `invalidFieldPostfix`.}
         )
-        {.pop.}
 
       typeAccess.add(quote do:
         template isOwnedComponent*(value: typedesc[`instanceTypeIdent`] | `instanceTypeIdent` | `typeNameIdent`): bool = true
@@ -513,22 +539,24 @@ proc genTypeAccess*(id: EcsIdentity): NimNode =
         template update*(`instParam`: `instanceTypeIdent`, `valueParam`: `typeNameIdent`): untyped =
           `standAloneUpdate`
         template componentCount*(value: typedesc[`typeNameIdent`] | typedesc[`instanceTypeIdent`]): int = `ownerSystem`.count
-        ## Allows access to the owning system's `groups` field that stores components of this type.
-        template componentStorage*(value: typedesc[`instanceTypeIdent`] | `instanceTypeIdent` | `typeNameIdent`): untyped = `ownerSystem`.groups
-        template ownerSystemIndex*(value: typedesc[`instanceTypeIdent`] | `instanceTypeIdent` | `typeNameIdent`): untyped = `sysOwner`
         template ownerSystem*(value: typedesc[`instanceTypeIdent`] | `instanceTypeIdent` | `typeNameIdent`): untyped = `ownerSystem`
       )
+      if not defined(ecsNoExtraTemplates):
+        typeAccess.add(quote do:
+          ## Allows access to the owning system's `groups` field that stores components of this type.
+          template componentStorage*(value: typedesc[`instanceTypeIdent`] | `instanceTypeIdent` | `typeNameIdent`): untyped = `ownerSystem`.groups
+          template ownerSystemIndex*(value: typedesc[`instanceTypeIdent`] | `instanceTypeIdent` | `typeNameIdent`): untyped = `sysOwner`
+        )
     else:
       # Non-owned component.
 
       # Dot overload to access the fields of the component in storage via the index.
       case options.accessMethod
       of amDotOp:
-        # We only need two dot operators, one for reading and one for writing to cover all the fields in this instance.
-        {.push experimental: "dotOperators".}
+        # Field access for this instance type, used by the `.` and `.=` operators for `ComponentInstance`.
         let
-          dotOp = nnkAccQuoted.newTree(newIdentNode ".")
-          dotEqOp = nnkAccQuoted.newTree(newIdentNode ".=")
+          dotOp = ident "ecsFieldRead"
+          dotEqOp = ident "ecsFieldWrite"
 
         typeAccess.add(quote do:
           template `dotOp`*(`inst`: `instanceTypeIdent`, `fieldParam`: untyped): untyped =
@@ -546,7 +574,6 @@ proc genTypeAccess*(id: EcsIdentity): NimNode =
             else:
               {.fatal: `invalidFieldPrefix` & astToStr(`fieldParam`) & `invalidFieldPostfix`.}
         )
-        {.pop.}
 
       typeAccess.add(quote do:
         ## Converts the instance to a component storage directly.
@@ -559,10 +586,13 @@ proc genTypeAccess*(id: EcsIdentity): NimNode =
         template generation*(inst: `instTypeNode`): untyped =
           ## Access the generation of this component.
           `generationTypeNode`(`instanceIds`[inst.int]).ComponentGeneration
-        ## Allows access to the base storage container that stores all components of this type.
-        template componentStorage*(value: typedesc[`instanceTypeIdent`] | `instanceTypeIdent` | `typeNameIdent`): untyped = `lcTypeIdent`
-        template ownerSystemIndex*(value: typedesc[`instanceTypeIdent`] | `instanceTypeIdent` | `typeNameIdent`): untyped = InvalidSystemIndex
       )
+      if not defined(ecsNoExtraTemplates):
+        typeAccess.add(quote do:
+          ## Allows access to the base storage container that stores all components of this type.
+          template componentStorage*(value: typedesc[`instanceTypeIdent`] | `instanceTypeIdent` | `typeNameIdent`): untyped = `lcTypeIdent`
+          template ownerSystemIndex*(value: typedesc[`instanceTypeIdent`] | `instanceTypeIdent` | `typeNameIdent`): untyped = InvalidSystemIndex
+        )
 
       let
         # delIdx is the index of the component in its storage.
@@ -739,16 +769,18 @@ proc genTypeAccess*(id: EcsIdentity): NimNode =
           ## Creates a new component from a generated `ref` component descendant. Does not update systems.
           newInstance(`refTypeNameIdent`(val).value)
 
-        template delInstance*(`tyParam`: `typeNameIdent` | `instanceTypeIdent`): untyped =
-          ## Marks a component as deleted. Does not update systems.
-          `tyParam`.`deleteIdent`()
-
         template update*(`instParam`: `instanceTypeIdent`, `valueParam`: `typeNameIdent`): untyped =
           ## Update storage.
           ## `update` operates as a simple assignment into the storage array and uses the type's `==` proc.
           `standAloneUpdate`
 
       )
+      if not defined(ecsNoExtraTemplates):
+        typeAccess.add(quote do:
+          template delInstance*(`tyParam`: `typeNameIdent` | `instanceTypeIdent`): untyped =
+            ## Marks a component as deleted. Does not update systems.
+            `tyParam`.`deleteIdent`()
+        )
 
     typeAccess.add(quote do:
 

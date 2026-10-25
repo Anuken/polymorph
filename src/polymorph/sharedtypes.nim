@@ -168,6 +168,13 @@ type
   # Index representing a system.
   SystemIndex* = distinct int
 
+  EcsSystem* {.inheritable, pure.} = object
+    ## Base type of all generated system types.
+    ## Utilities shared by all systems, like `high` and `name`, are defined
+    ## once for this type rather than once per system type, as every
+    ## overload of a name is checked for each call using that name.
+    id*: SystemIndex
+
   EntityId* = distinct IdBaseType
   EntityInstance* = distinct IdBaseType
 
@@ -236,6 +243,13 @@ type
   ## component.
   ## For run-time operations on component ids, use `caseComponent` and pass the ComponentTypeId
   ComponentIndex* = distinct IdBaseType
+
+  ComponentInstance*[T] = distinct IdBaseType
+    ## Base of the instance types generated for each component type, eg;
+    ## `PosInstance = ComponentInstance[PosInstanceTag]`.
+    ## Operations common to all instance types, like `==`, can then be
+    ## defined once instead of once per component type.
+
   ## Instance count, incremented when the slot is used.
   ## This is used to protect against referencing a deleted component with the same slot index.
   ComponentGeneration* = distinct IdBaseType

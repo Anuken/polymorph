@@ -20,6 +20,31 @@ from private/eventutils import userEntAccess, userSysCompAccess
 import random
 
 
+# Utilities shared by all system types.
+# These are defined once for `EcsSystem` rather than generated for each
+# system, since every overload of a name is checked for each call using
+# that name, including calls unrelated to systems (eg; `high` or `contains`).
+
+template high*[T: EcsSystem](system: T): int =
+  ## The highest index of `groups` in use.
+  when system.groups is array: system.nextFreeIdx - 1
+  else: system.groups.high
+
+template count*[T: EcsSystem](system: T): int =
+  ## The number of entities in this system.
+  when system.groups is array: system.nextFreeIdx
+  else: system.groups.len
+
+func name*[T: EcsSystem](sys: T): string =
+  ## The name of the system, as given to `defineSystem` or `makeSystem`.
+  sys.systemName
+
+template contains*[T: EcsSystem](sys: T, entity: EntityRef): bool =
+  ## Returns `true` if `entity` is in this system.
+  when sys.index is array | seq: sys.index[entity.entityId.int].exists
+  else: sys.index.hasKey(entity.entityId)
+
+
 proc indexInit(sysNode: NimNode, options: ECSSysOptions): NimNode =
   let
     initTab = bindSym "initTable"
@@ -203,11 +228,10 @@ proc makeSystemType(id: EcsIdentity, sysIndex: SystemIndex, extraFields: seq[Nim
   # Generate the type for this system
   result.add(quote do:
     type
-      `sysIdent`* = object
-        id*: SystemIndex
+      `sysIdent`* = object of EcsSystem
         lastIndex*: int           ## Records the last item position processed for streaming.
         streamRate*: Natural      ## Rate at which this system streams items by default, overridden if defined using `stream x:`.
-        # TODO: Currently writable, use sys.name to get a generated constant by system type.
+        # TODO: Currently writable.
         systemName*: string       ## Name is automatically set up at code construction in defineSystem.
         disabled*: bool           ## Doesn't run doProc if true, no work is done.
         paused*: bool             ## Pauses this system's entity processing, but still runs init & finish. 
@@ -218,7 +242,6 @@ proc makeSystemType(id: EcsIdentity, sysIndex: SystemIndex, extraFields: seq[Nim
   var
     # Extract field list so we can edit them.
     fields = result.recList(sysTypeName)
-    highIdx, count: NimNode
 
   doAssert fields.kind != nnkEmpty, "Internal error: Cannot retrieve fields from system type `" & name & "`"
 
@@ -233,11 +256,6 @@ proc makeSystemType(id: EcsIdentity, sysIndex: SystemIndex, extraFields: seq[Nim
 
     of ssSeq:
       fields.add genField("groups", true, genSeq(itemTypeIdent))
-      
-      highIdx = quote do:
-        template high*(system: `sysIdent`): int = system.groups.high
-      count = quote do:
-        template count*(system: `sysIdent`): int = system.groups.len
 
     of ssArray:
       let
@@ -246,11 +264,6 @@ proc makeSystemType(id: EcsIdentity, sysIndex: SystemIndex, extraFields: seq[Nim
       fields.add genField("groups", true, genArray(maxEntities + 1, itemTypeIdent))
       # TODO: Make nextFreeIdx private. This is exposed due to `newEntityWith` not building a proc, so needs internal access.
       fields.add genField("nextFreeIdx", true, ident "int")
-      
-      highIdx = quote do:
-        template high*(system: `sysIdent`): int = system.nextFreeIdx - 1
-      count = quote do:
-        template count*(system: `sysIdent`): int = system.nextFreeIdx
 
   # Define the `index` field, used to translate from entityId to the groups row. 
   case options.indexFormat
@@ -302,11 +315,6 @@ proc makeSystemType(id: EcsIdentity, sysIndex: SystemIndex, extraFields: seq[Nim
   
   if extraFields.len > 0:
     fields.add(extraFields)
-
-  result.add(quote do:
-    `highIdx`
-    `count`
-  )
 
 
 proc instantiateSystem(id: EcsIdentity, sysIndex: SystemIndex, sysName: string, fieldSetup: seq[tuple[fieldName, value: NimNode]]): NimNode =
@@ -377,10 +385,6 @@ proc instantiateSystem(id: EcsIdentity, sysIndex: SystemIndex, sysName: string, 
           `initParam`.cores = countProcessors()
           `initParam`.threads.setLen `initParam`.cores          
 
-  let
-    entity = ident "entity"
-    sysHasEntity = sysVar.indexHasKey(quote do: `entity`.entityId, options.indexFormat)
-
   result.add(quote do:
 
     proc `initIdent`*(`initParam`: var `sysIdent`) =
@@ -399,14 +403,9 @@ proc instantiateSystem(id: EcsIdentity, sysIndex: SystemIndex, sysName: string, 
 
     `timingsProcs`
 
-    func name*(sys: `sysIdent`): string = `sysName`
-    
     # Call init proc to set up the system's variable.
     # Initialising in-place guarantees no copies.
     `sysVar`.`initIdent`()
-
-    proc contains*(sys: `sysIdent`, `entity`: EntityRef): bool =
-      `sysHasEntity`  
   )
 
 
@@ -710,17 +709,23 @@ proc createSystem(id: EcsIdentity, sysName: string, componentTypes: NimNode, ext
       ownedComponents = nnkBracket.newTree()
     
     for c in ownedComponentIds:
-      ownedComponents.add ident(id.typeName c)
+      ownedComponents.add newCall(ident "typeId", ident(id.typeName c))
 
     result.add(quote do:
       template isOwner*(sys: `sysType`): bool = true
-      template ownedComponents*(sys: `sysType`): seq[ComponentTypeId] = `ownedComponents`
       )
+    if not defined(ecsNoExtraTemplates):
+      result.add(quote do:
+        template ownedComponents*(sys: `sysType`): seq[ComponentTypeId] = @`ownedComponents`
+        )
   else:
     result.add(quote do:
       template isOwner*(sys: `sysType`): bool = false
-      template ownedComponents*(sys: `sysType`): seq[ComponentTypeId] = []
       )
+    if not defined(ecsNoExtraTemplates):
+      result.add(quote do:
+        template ownedComponents*(sys: `sysType`): seq[ComponentTypeId] = @[]
+        )
 
   id.add_ecsSysDefined sysIndex
 
