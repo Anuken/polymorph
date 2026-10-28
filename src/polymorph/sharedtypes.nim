@@ -112,7 +112,10 @@ func dynamicSizeSystem*: ECSSysOptions =
   ECSSysOptions(
     storageFormat: ssSeq,
     indexFormat: sifTable,
-    assertItem: compileOption("assertions"))
+    assertItem: compileOption("assertions"),
+    # `-d:ecsSysCommitInPlace` declares the system types and instances where the
+    # system is defined, so code before `makeEcs` can use them.
+    commit: when defined(ecsSysCommitInPlace): sdcInPlace else: sdcDeferMakeEcs)
 
 func fixedSizeComponents*(maxInstances: int): ECSCompOptions =
   ## Shortcut for fixed size, high performance, high memory systems.
